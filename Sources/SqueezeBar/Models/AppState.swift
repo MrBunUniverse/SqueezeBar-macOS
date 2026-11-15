@@ -1,0 +1,1154 @@
+import Foundation
+import SwiftUI
+import Combine
+import AppKit
+import ServiceManagement
+
+/// Running jobs and their aggregate progress. Kept apart from AppState so a progress tick only re-renders the views that show jobs.
+@MainActor
+public final class JobBoard: ObservableObject {
+    @Published public var activeJobs: [CompressionJob] = []
+    @Published public var overallProgress: Double = 0.0
+    @Published public var isProcessing: Bool = false
+}
+
+@MainActor
+public final class AppState: ObservableObject {
+    public static let shared = AppState()
+    
+    // MARK: - Folders & Project Organization
+    @Published public var customFolders: [CompressionFolder] = [] {
+        didSet {
+            saveFolders()
+        }
+    }
+    
+    // MARK: - User Settings Keys
+    private enum Keys {
+        static let customFolders = "squeezebar.customFolders"
+        static let imageFormatPolicy = "squeezebar.imageFormatPolicy"
+        static let imageQualityPreset = "squeezebar.imageQualityPreset"
+        static let imageQualitySlider = "squeezebar.imageQualitySlider"
+        static let imageResolutionScale = "squeezebar.imageResolutionScale"
+        
+        static let videoCodec = "squeezebar.videoCodec"
+        static let videoFramerate = "squeezebar.videoFramerate"
+        static let videoQualityPreset = "squeezebar.videoQualityPreset"
+        static let videoQualitySlider = "squeezebar.videoQualitySlider"
+        static let videoResolutionScale = "squeezebar.videoResolutionScale"
+        static let videoRemoveAudio = "squeezebar.videoRemoveAudio"
+        static let gifFramerate = "squeezebar.gifFramerate"
+        
+        static let audioBitrate = "squeezebar.audioBitrate"
+        
+        static let pdfDPI = "squeezebar.pdfDPI"
+        static let pdfImageQuality = "squeezebar.pdfImageQuality"
+        static let pdfGrayscale = "squeezebar.pdfGrayscale"
+        static let pdfStripMetadata = "squeezebar.pdfStripMetadata"
+        
+        static let targetSizeMode = "squeezebar.targetSizeMode"
+        static let customTargetSizeMB = "squeezebar.customTargetSizeMB"
+        static let preserveResolutionInTargetMode = "squeezebar.preserveResolutionInTargetMode"
+        static let preserveAudioQualityInTargetMode = "squeezebar.preserveAudioQualityInTargetMode"
+        
+        static let watchFolderPath = "squeezebar.watchFolderPath"
+        static let isWatchFolderEnabled = "squeezebar.isWatchFolderEnabled"
+        
+        static let outputSuffix = "squeezebar.outputSuffix"
+        static let stripMetadata = "squeezebar.stripMetadata"
+        static let hapticEnabled = "squeezebar.hapticEnabled"
+        static let soundEnabled = "squeezebar.soundEnabled"
+        static let historyList = "squeezebar.historyList"
+        static let totalBytesSaved = "squeezebar.totalBytesSaved"
+        static let totalOriginalBytes = "squeezebar.totalOriginalBytes"
+        static let totalFilesProcessed = "squeezebar.totalFilesProcessed"
+        static let accentTheme = "squeezebar.accentTheme"
+        static let customAccentHex = "squeezebar.customAccentHex"
+        static let customOutputFolder = "squeezebar.customOutputFolder"
+        static let exportToSubfolder = "squeezebar.exportToSubfolder"
+        static let subfolderName = "squeezebar.subfolderName"
+        static let finderServiceEnabled = "squeezebar.finderServiceEnabled"
+        static let soundTheme = "squeezebar.soundTheme"
+        static let uiScale = "squeezebar.uiScale"
+        static let appTransparency = "squeezebar.appTransparency"
+        static let appGlassFrost = "squeezebar.appGlassFrost"
+        static let appGlassDepth = "squeezebar.appGlassDepth"
+        static let floatingBallEnabled = "squeezebar.floatingBallEnabled"
+    }
+    
+    // MARK: - App Window Transparency
+    @Published public var appTransparency: Double {
+        didSet { UserDefaults.standard.set(appTransparency, forKey: Keys.appTransparency) }
+    }
+    @Published public var appGlassFrost: Double {
+        didSet { UserDefaults.standard.set(appGlassFrost, forKey: Keys.appGlassFrost) }
+    }
+    @Published public var appGlassDepth: Double {
+        didSet { UserDefaults.standard.set(appGlassDepth, forKey: Keys.appGlassDepth) }
+    }
+
+    // MARK: - Desktop Floating Drop Ball
+    @Published public var floatingBallEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(floatingBallEnabled, forKey: Keys.floatingBallEnabled)
+            DispatchQueue.main.async {
+                FloatingBallController.shared.updateVisibility()
+            }
+        }
+    }
+    
+
+    // MARK: - UI Scaling / Display Density Option
+    @Published public var uiScale: UIScaleOption {
+        didSet {
+            UserDefaults.standard.set(uiScale.rawValue, forKey: Keys.uiScale)
+            DispatchQueue.main.async {
+                StatusBarController.sharedInstance?.updatePopoverDimensionsForScale(self.uiScale)
+                FloatingDropWindowController.shared.updateWindowDimensionsForScale(self.uiScale)
+            }
+        }
+    }
+    
+    // MARK: - Completion Sound Theme
+    @Published public var soundTheme: SoundEffectTheme {
+        didSet {
+            UserDefaults.standard.set(soundTheme.rawValue, forKey: Keys.soundTheme)
+        }
+    }
+    
+    // MARK: - Appearance & Accent Color Theme
+    @Published public var accentTheme: AccentColorTheme {
+        didSet {
+            UserDefaults.standard.set(accentTheme.rawValue, forKey: Keys.accentTheme)
+        }
+    }
+    
+    @Published public var customAccentHex: String {
+        didSet {
+            UserDefaults.standard.set(customAccentHex, forKey: Keys.customAccentHex)
+        }
+    }
+    
+    public var accentColor: Color {
+        switch accentTheme {
+        case .custom:
+            return AppState.colorFromHex(customAccentHex) ?? Color(red: 0.1, green: 0.5, blue: 1.0)
+        case .blue:
+            return Color.blue
+        case .purple:
+            return Color(red: 0.65, green: 0.32, blue: 0.88)
+        case .pink:
+            return Color(red: 0.98, green: 0.32, blue: 0.58)
+        case .red:
+            return Color(red: 0.95, green: 0.28, blue: 0.28)
+        case .orange:
+            return Color(red: 0.98, green: 0.55, blue: 0.18)
+        case .yellow:
+            return Color(red: 0.98, green: 0.78, blue: 0.12)
+        case .green:
+            return Color(red: 0.32, green: 0.82, blue: 0.42)
+        case .graphite:
+            return Color(red: 0.58, green: 0.60, blue: 0.64)
+        }
+    }
+    
+    /// Text color to display ON TOP of the accent color (e.g. inside active pills/buttons)
+    /// Automatically switches to deep black/dark charcoal on light/white/yellow accents, and pure white on dark accents.
+    public var contrastTextColor: Color {
+        let nsColor = NSColor(accentColor).usingColorSpace(.sRGB) ?? NSColor.blue
+        // WCAG relative luminance formula
+        let luminance = 0.2126 * nsColor.redComponent + 0.7152 * nsColor.greenComponent + 0.0722 * nsColor.blueComponent
+        return luminance > 0.55 ? Color(white: 0.10) : Color.white
+    }
+    
+    public static func colorFromHex(_ hex: String) -> Color? {
+        var cleanHex = hex.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if cleanHex.hasPrefix("#") {
+            cleanHex.removeFirst()
+        }
+        guard cleanHex.count == 6, let rgbValue = UInt64(cleanHex, radix: 16) else {
+            return nil
+        }
+        let r = Double((rgbValue & 0xFF0000) >> 16) / 255.0
+        let g = Double((rgbValue & 0x00FF00) >> 8) / 255.0
+        let b = Double(rgbValue & 0x0000FF) / 255.0
+        return Color(red: r, green: g, blue: b)
+    }
+    
+    // MARK: - Image Settings
+    @Published public var imageFormatPolicy: ImageFormatPolicy {
+        didSet {
+            UserDefaults.standard.set(imageFormatPolicy.rawValue, forKey: Keys.imageFormatPolicy)
+        }
+    }
+    
+    @Published public var imageQualityPreset: QualityPreset {
+        didSet {
+            UserDefaults.standard.set(imageQualityPreset.rawValue, forKey: Keys.imageQualityPreset)
+            imageQualitySlider = imageQualityPreset.normalizedQuality
+        }
+    }
+    
+    @Published public var imageQualitySlider: Double {
+        didSet {
+            UserDefaults.standard.set(imageQualitySlider, forKey: Keys.imageQualitySlider)
+        }
+    }
+    
+    @Published public var imageResolutionScale: Double {
+        didSet {
+            UserDefaults.standard.set(imageResolutionScale, forKey: Keys.imageResolutionScale)
+        }
+    }
+    
+    // MARK: - Video Settings
+    @Published public var videoCodec: VideoCodecPreference {
+        didSet {
+            UserDefaults.standard.set(videoCodec.rawValue, forKey: Keys.videoCodec)
+        }
+    }
+    
+    @Published public var videoFramerate: VideoFramerateOption {
+        didSet {
+            UserDefaults.standard.set(videoFramerate.rawValue, forKey: Keys.videoFramerate)
+        }
+    }
+    
+    @Published public var videoQualityPreset: QualityPreset {
+        didSet {
+            UserDefaults.standard.set(videoQualityPreset.rawValue, forKey: Keys.videoQualityPreset)
+            videoQualitySlider = videoQualityPreset.normalizedQuality
+        }
+    }
+    
+    @Published public var videoQualitySlider: Double {
+        didSet {
+            UserDefaults.standard.set(videoQualitySlider, forKey: Keys.videoQualitySlider)
+        }
+    }
+    
+    @Published public var videoResolutionScale: Double {
+        didSet {
+            UserDefaults.standard.set(videoResolutionScale, forKey: Keys.videoResolutionScale)
+        }
+    }
+    
+    @Published public var videoRemoveAudio: Bool {
+        didSet {
+            UserDefaults.standard.set(videoRemoveAudio, forKey: Keys.videoRemoveAudio)
+        }
+    }
+    
+    @Published public var gifFramerate: GIFFramerateOption {
+        didSet {
+            UserDefaults.standard.set(gifFramerate.rawValue, forKey: Keys.gifFramerate)
+        }
+    }
+    
+    // MARK: - Audio Settings
+    @Published public var audioBitrate: AudioBitratePreference {
+        didSet {
+            UserDefaults.standard.set(audioBitrate.rawValue, forKey: Keys.audioBitrate)
+        }
+    }
+    
+    // MARK: - PDF Settings
+    @Published public var pdfDPI: PDFDPIOption {
+        didSet {
+            UserDefaults.standard.set(pdfDPI.rawValue, forKey: Keys.pdfDPI)
+        }
+    }
+    
+    @Published public var pdfImageQuality: Double {
+        didSet {
+            UserDefaults.standard.set(pdfImageQuality, forKey: Keys.pdfImageQuality)
+        }
+    }
+    
+    @Published public var pdfGrayscale: Bool {
+        didSet {
+            UserDefaults.standard.set(pdfGrayscale, forKey: Keys.pdfGrayscale)
+        }
+    }
+    
+    @Published public var pdfStripMetadata: Bool {
+        didSet {
+            UserDefaults.standard.set(pdfStripMetadata, forKey: Keys.pdfStripMetadata)
+        }
+    }
+    
+    // MARK: - Watch Folder Settings
+    @Published public var watchFolderPath: String? {
+        didSet {
+            UserDefaults.standard.set(watchFolderPath, forKey: Keys.watchFolderPath)
+        }
+    }
+    
+    @Published public var isWatchFolderEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isWatchFolderEnabled, forKey: Keys.isWatchFolderEnabled)
+        }
+    }
+    
+    // MARK: - Automation & Target Size
+    @Published public var targetSizeMode: TargetSizeMode {
+        didSet {
+            UserDefaults.standard.set(targetSizeMode.rawValue, forKey: Keys.targetSizeMode)
+            applyTargetSizePreset(targetSizeMode)
+        }
+    }
+    
+    @Published public var customTargetSizeMB: Double {
+        didSet {
+            UserDefaults.standard.set(customTargetSizeMB, forKey: Keys.customTargetSizeMB)
+            if targetSizeMode == .custom {
+                applyCustomTargetSize(customTargetSizeMB)
+            }
+        }
+    }
+    
+    @Published public var preserveResolutionInTargetMode: Bool {
+        didSet {
+            UserDefaults.standard.set(preserveResolutionInTargetMode, forKey: Keys.preserveResolutionInTargetMode)
+            if preserveResolutionInTargetMode {
+                imageResolutionScale = 1.0
+                videoResolutionScale = 1.0
+            }
+        }
+    }
+    
+    @Published public var preserveAudioQualityInTargetMode: Bool {
+        didSet {
+            UserDefaults.standard.set(preserveAudioQualityInTargetMode, forKey: Keys.preserveAudioQualityInTargetMode)
+        }
+    }
+    
+    public func applyTargetSizePreset(_ mode: TargetSizeMode) {
+        switch mode {
+        case .web2:
+            // 2 MB: Aggressive compression
+            imageQualitySlider = 0.65
+            videoQualitySlider = 0.50
+            pdfDPI = .dpi72
+            pdfImageQuality = 0.55
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 0.75
+                videoResolutionScale = 0.50
+            }
+        case .email10:
+            // 10 MB: Balanced compression
+            imageQualitySlider = 0.75
+            videoQualitySlider = 0.65
+            pdfDPI = .dpi150
+            pdfImageQuality = 0.65
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 0.85
+                videoResolutionScale = 0.75
+            }
+        case .discord25:
+            // 25 MB: High quality target
+            imageQualitySlider = 0.85
+            videoQualitySlider = 0.80
+            pdfDPI = .dpi150
+            pdfImageQuality = 0.75
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 1.0
+                videoResolutionScale = 1.0
+            }
+        case .discord50:
+            // 50 MB: Visually lossless / large target
+            imageQualitySlider = 0.90
+            videoQualitySlider = 0.85
+            pdfDPI = .dpi200
+            pdfImageQuality = 0.85
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 1.0
+                videoResolutionScale = 1.0
+            }
+        case .custom:
+            applyCustomTargetSize(customTargetSizeMB)
+        case .off:
+            // Manual: Keep current user settings
+            break
+        }
+    }
+    
+    public func applyCustomTargetSize(_ mb: Double) {
+        if mb <= 5.0 {
+            imageQualitySlider = 0.60
+            videoQualitySlider = 0.45
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 0.50
+                videoResolutionScale = 0.50
+            }
+        } else if mb <= 15.0 {
+            imageQualitySlider = 0.75
+            videoQualitySlider = 0.65
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 0.75
+                videoResolutionScale = 0.75
+            }
+        } else {
+            imageQualitySlider = 0.85
+            videoQualitySlider = 0.80
+            if !preserveResolutionInTargetMode {
+                imageResolutionScale = 1.0
+                videoResolutionScale = 1.0
+            }
+        }
+    }
+    
+    // MARK: - Staged Queue Management
+    @Published public var stagedQueue: [StagedQueueItem] = []
+    
+    @MainActor
+    public func addFilesToQueue(_ urls: [URL]) {
+        let baseConfig = currentConfiguration()
+        Task {
+            // Folder walks and file-size lookups run off the main thread; the queue is updated once, here.
+            let found = await Task.detached(priority: .userInitiated) { () -> [(url: URL, size: Int64, mediaType: MediaType)] in
+                var found: [(url: URL, size: Int64, mediaType: MediaType)] = []
+                for url in urls {
+                    var isDir: ObjCBool = false
+                    let isFolder = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue
+                    for candidate in isFolder ? MediaCompressionEngine.shared.gatherMediaFiles(from: [url]) : [url] {
+                        let mediaType = MediaType.classify(url: candidate)
+                        guard mediaType != MediaType.unsupported else { continue }
+                        let size = (try? candidate.resourceValues(forKeys: [URLResourceKey.fileSizeKey]).fileSize).map { Int64($0) } ?? 0
+                        found.append((candidate, size, mediaType))
+                    }
+                }
+                return found
+            }.value
+            
+            let items = found.map {
+                StagedQueueItem(fileURL: $0.url, originalSize: $0.size, mediaType: $0.mediaType, baseConfig: baseConfig)
+            }
+            stagedQueue.append(contentsOf: items)
+            
+            if !items.isEmpty && hapticEnabled {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
+            if items.isEmpty {
+                reportNoSupportedFiles(urls: urls)
+            }
+        }
+    }
+    
+    @MainActor
+    public func removeFromQueue(id: UUID) {
+        stagedQueue.removeAll { $0.id == id }
+    }
+    
+    @MainActor
+    public func clearQueue() {
+        stagedQueue.removeAll()
+    }
+    
+    @MainActor
+    public func squeezeStagedQueue(targetFolderId: UUID? = nil) {
+        guard !stagedQueue.isEmpty else { return }
+        let itemsToProcess = stagedQueue
+        stagedQueue.removeAll()
+        
+        Task {
+            await MediaCompressionEngine.shared.processStagedItems(itemsToProcess, targetFolderId: targetFolderId)
+        }
+    }
+    
+    // MARK: - General Settings
+    @Published public var outputSuffix: String {
+        didSet {
+            UserDefaults.standard.set(outputSuffix, forKey: Keys.outputSuffix)
+        }
+    }
+    
+    @Published public var customOutputFolder: String? {
+        didSet {
+            UserDefaults.standard.set(customOutputFolder, forKey: Keys.customOutputFolder)
+        }
+    }
+    
+    @Published public var exportToSubfolder: Bool {
+        didSet {
+            UserDefaults.standard.set(exportToSubfolder, forKey: Keys.exportToSubfolder)
+        }
+    }
+    
+    @Published public var subfolderName: String {
+        didSet {
+            UserDefaults.standard.set(subfolderName, forKey: Keys.subfolderName)
+        }
+    }
+    
+    @Published public var stripMetadata: Bool {
+        didSet {
+            UserDefaults.standard.set(stripMetadata, forKey: Keys.stripMetadata)
+        }
+    }
+    
+    @Published public var hapticEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(hapticEnabled, forKey: Keys.hapticEnabled)
+        }
+    }
+    
+    @Published public var soundEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(soundEnabled, forKey: Keys.soundEnabled)
+        }
+    }
+    
+    // MARK: - Finder Quick Action (Right-Click Context Menu)
+    @Published public var finderServiceEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(finderServiceEnabled, forKey: Keys.finderServiceEnabled)
+        }
+    }
+    
+    // MARK: - Launch at macOS Boot / Login
+    @Published public var launchAtLogin: Bool = false
+    
+    public func updateLaunchAtLoginStatus() {
+        if #available(macOS 13.0, *) {
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        }
+    }
+    
+    public func setLaunchAtLogin(enabled: Bool) {
+        if #available(macOS 13.0, *) {
+            do {
+                if enabled {
+                    if SMAppService.mainApp.status != .enabled {
+                        try SMAppService.mainApp.register()
+                    }
+                } else {
+                    if SMAppService.mainApp.status == .enabled {
+                        try SMAppService.mainApp.unregister()
+                    }
+                }
+                launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            } catch {
+                print("Failed to update Launch at Login: \(error)")
+                launchAtLogin = (SMAppService.mainApp.status == .enabled)
+            }
+        }
+    }
+    
+    @Published public var isPinned: Bool = false
+    // The menu bar icon always opens the movable window (the popover is no longer the default).
+    @Published public var isDetached: Bool = true
+    @Published public var inspectedResult: CompressionResult? = nil
+    
+    // MARK: - Runtime State
+    // Job progress ticks on their own object, so they don't re-render every AppState observer.
+    public let jobs = JobBoard()
+    public var isProcessing: Bool { jobs.isProcessing }
+    public var overallProgress: Double { jobs.overallProgress }
+    public var activeJobs: [CompressionJob] { jobs.activeJobs }
+    @Published public var recentResults: [CompressionResult] = []
+    @Published public var showSuccessBadge: Bool = false
+    @Published public var showFailureBadge: Bool = false
+    @Published public var failedJobs: [FailedJob] = []
+    
+    // MARK: - Cumulative Stats
+    @Published public var totalBytesSaved: Int64
+    @Published public var totalOriginalBytes: Int64
+    @Published public var totalFilesProcessed: Int
+    
+    
+    // MARK: - Initialization
+    private init() {
+        // Load Image Settings
+        let savedImgFormat = UserDefaults.standard.string(forKey: Keys.imageFormatPolicy) ?? ""
+        self.imageFormatPolicy = ImageFormatPolicy(rawValue: savedImgFormat) ?? .preserveOriginal
+        
+        let savedImgPreset = UserDefaults.standard.string(forKey: Keys.imageQualityPreset) ?? ""
+        self.imageQualityPreset = QualityPreset(rawValue: savedImgPreset) ?? .visuallyLossless
+        
+        let savedImgQuality = UserDefaults.standard.double(forKey: Keys.imageQualitySlider)
+        self.imageQualitySlider = savedImgQuality > 0 ? savedImgQuality : 0.85
+        
+        let savedImgRes = UserDefaults.standard.double(forKey: Keys.imageResolutionScale)
+        self.imageResolutionScale = savedImgRes > 0 ? savedImgRes : 1.0
+        
+        // Load Video Settings
+        let savedVidCodec = UserDefaults.standard.string(forKey: Keys.videoCodec) ?? ""
+        self.videoCodec = VideoCodecPreference(rawValue: savedVidCodec) ?? .hevc
+        
+        let savedVidFPS = UserDefaults.standard.string(forKey: Keys.videoFramerate) ?? ""
+        self.videoFramerate = VideoFramerateOption(rawValue: savedVidFPS) ?? .original
+        
+        let savedVidPreset = UserDefaults.standard.string(forKey: Keys.videoQualityPreset) ?? ""
+        self.videoQualityPreset = QualityPreset(rawValue: savedVidPreset) ?? .visuallyLossless
+        
+        let savedVidQuality = UserDefaults.standard.double(forKey: Keys.videoQualitySlider)
+        self.videoQualitySlider = savedVidQuality > 0 ? savedVidQuality : 0.80
+        
+        let savedVidRes = UserDefaults.standard.double(forKey: Keys.videoResolutionScale)
+        self.videoResolutionScale = savedVidRes > 0 ? savedVidRes : 1.0
+        
+        self.videoRemoveAudio = UserDefaults.standard.bool(forKey: Keys.videoRemoveAudio)
+        
+        let savedGIFFPS = UserDefaults.standard.string(forKey: Keys.gifFramerate) ?? ""
+        self.gifFramerate = GIFFramerateOption(rawValue: savedGIFFPS) ?? .half15
+        
+        // Load Audio Settings
+        let savedAudioBitrate = UserDefaults.standard.string(forKey: Keys.audioBitrate) ?? ""
+        self.audioBitrate = AudioBitratePreference(rawValue: savedAudioBitrate) ?? .k128
+        
+        // Load PDF Settings
+        let savedPDFDPI = UserDefaults.standard.string(forKey: Keys.pdfDPI) ?? ""
+        self.pdfDPI = PDFDPIOption(rawValue: savedPDFDPI) ?? .dpi150
+        
+        let savedPDFQuality = UserDefaults.standard.double(forKey: Keys.pdfImageQuality)
+        self.pdfImageQuality = savedPDFQuality > 0 ? savedPDFQuality : 0.70
+        
+        self.pdfGrayscale = UserDefaults.standard.bool(forKey: Keys.pdfGrayscale)
+        self.pdfStripMetadata = UserDefaults.standard.object(forKey: Keys.pdfStripMetadata) as? Bool ?? true
+        
+        // Load Watch Folder Settings
+        self.watchFolderPath = UserDefaults.standard.string(forKey: Keys.watchFolderPath)
+        self.isWatchFolderEnabled = UserDefaults.standard.bool(forKey: Keys.isWatchFolderEnabled)
+        
+        // Load Automation & Target Size
+        let savedTargetMode = UserDefaults.standard.string(forKey: Keys.targetSizeMode) ?? ""
+        self.targetSizeMode = TargetSizeMode(rawValue: savedTargetMode) ?? .off
+        
+        let savedCustomSize = UserDefaults.standard.double(forKey: Keys.customTargetSizeMB)
+        self.customTargetSizeMB = savedCustomSize > 0 ? savedCustomSize : 25.0
+        
+        self.preserveResolutionInTargetMode = UserDefaults.standard.bool(forKey: Keys.preserveResolutionInTargetMode)
+        self.preserveAudioQualityInTargetMode = UserDefaults.standard.bool(forKey: Keys.preserveAudioQualityInTargetMode)
+        
+        // Load General Settings
+        let savedTheme = UserDefaults.standard.string(forKey: Keys.accentTheme) ?? ""
+        self.accentTheme = AccentColorTheme(rawValue: savedTheme) ?? .blue
+        
+        let savedSoundTheme = UserDefaults.standard.string(forKey: Keys.soundTheme) ?? ""
+        self.soundTheme = SoundEffectTheme(rawValue: savedSoundTheme) ?? .defaultGlass
+        
+        let savedCustomHex = UserDefaults.standard.string(forKey: Keys.customAccentHex) ?? ""
+        self.customAccentHex = savedCustomHex.isEmpty ? "007AFF" : savedCustomHex
+        
+        self.outputSuffix = UserDefaults.standard.string(forKey: Keys.outputSuffix) ?? "_min"
+        self.customOutputFolder = UserDefaults.standard.string(forKey: Keys.customOutputFolder)
+        self.exportToSubfolder = UserDefaults.standard.bool(forKey: Keys.exportToSubfolder)
+        self.subfolderName = UserDefaults.standard.string(forKey: Keys.subfolderName) ?? "Squeezed"
+        self.finderServiceEnabled = UserDefaults.standard.object(forKey: Keys.finderServiceEnabled) as? Bool ?? true
+        self.stripMetadata = UserDefaults.standard.object(forKey: Keys.stripMetadata) as? Bool ?? true     
+        
+        if UserDefaults.standard.object(forKey: Keys.floatingBallEnabled) == nil {
+            self.floatingBallEnabled = true
+        } else {
+            self.floatingBallEnabled = UserDefaults.standard.bool(forKey: Keys.floatingBallEnabled)
+        }
+        
+        if let rawScale = UserDefaults.standard.string(forKey: Keys.uiScale),
+           let scale = UIScaleOption(rawValue: rawScale) {
+            self.uiScale = scale
+        } else {
+            self.uiScale = .medium
+        }
+
+        self.appTransparency = min(max(UserDefaults.standard.object(forKey: Keys.appTransparency) as? Double ?? 0, 0), 1)
+        self.appGlassFrost = min(max(UserDefaults.standard.object(forKey: Keys.appGlassFrost) as? Double ?? 0.12, 0), 1)
+        self.appGlassDepth = min(max(UserDefaults.standard.object(forKey: Keys.appGlassDepth) as? Double ?? 0.65, 0), 1)
+        
+        if UserDefaults.standard.object(forKey: Keys.hapticEnabled) == nil {
+            self.hapticEnabled = true
+        } else {
+            self.hapticEnabled = UserDefaults.standard.bool(forKey: Keys.hapticEnabled)
+        }
+        
+        if UserDefaults.standard.object(forKey: Keys.soundEnabled) == nil {
+            self.soundEnabled = true
+        } else {
+            self.soundEnabled = UserDefaults.standard.bool(forKey: Keys.soundEnabled)
+        }
+        
+        self.totalBytesSaved = Int64(UserDefaults.standard.integer(forKey: Keys.totalBytesSaved))
+        self.totalOriginalBytes = Int64(UserDefaults.standard.integer(forKey: Keys.totalOriginalBytes))
+        self.totalFilesProcessed = UserDefaults.standard.integer(forKey: Keys.totalFilesProcessed)
+        
+        updateLaunchAtLoginStatus()
+        loadFolders()
+        loadHistory()
+    }
+    
+    // MARK: - Folder & Project Management
+    public func addFolder(name: String, icon: String = "folder.fill") {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let folder = CompressionFolder(name: trimmed, icon: icon)
+        customFolders.append(folder)
+    }
+    
+    public func renameFolder(id: UUID, newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let idx = customFolders.firstIndex(where: { $0.id == id }) {
+            customFolders[idx].name = trimmed
+        }
+    }
+    
+    public func deleteFolder(id: UUID) {
+        // Unassign all items in this folder
+        for i in 0..<recentResults.count {
+            if recentResults[i].folderId == id {
+                recentResults[i].folderId = nil
+            }
+        }
+        customFolders.removeAll { $0.id == id }
+        saveHistory()
+    }
+    
+    public func updateFolderColor(id: UUID, colorHex: String?) {
+        if let idx = customFolders.firstIndex(where: { $0.id == id }) {
+            customFolders[idx].colorHex = colorHex
+        }
+    }
+    
+    public func toggleFolderCollapse(id: UUID) {
+        if let idx = customFolders.firstIndex(where: { $0.id == id }) {
+            customFolders[idx].isCollapsed.toggle()
+        }
+    }
+    
+    public func assignResultsToFolder(resultIds: Set<UUID>, folderId: UUID?) {
+        for i in 0..<recentResults.count {
+            if resultIds.contains(recentResults[i].id) {
+                recentResults[i].folderId = folderId
+            }
+        }
+        saveHistory()
+    }
+    
+    // MARK: - Batch Operations (Delete, Format Rename)
+    public func batchDeleteResults(ids: Set<UUID>) {
+        recentResults.removeAll { ids.contains($0.id) }
+        saveHistory()
+    }
+    
+    public func batchRenameResults(ids: Set<UUID>, pattern: String) {
+        // Pattern format: e.g. "Homerenovation_#", "Project_{index}", or "CustomPrefix_#"
+        // If pattern contains '#' or '{index}' or '{i}', replace with sequential index 1, 2, 3...
+        var index = 1
+        let fm = FileManager.default
+        
+        for i in 0..<recentResults.count {
+            guard ids.contains(recentResults[i].id) else { continue }
+            let originalItem = recentResults[i]
+            let ext = originalItem.outputURL.pathExtension
+            let directory = originalItem.outputURL.deletingLastPathComponent()
+            
+            var newBaseName = pattern
+            if newBaseName.contains("#") {
+                newBaseName = newBaseName.replacingOccurrences(of: "#", with: "\(index)")
+            } else if newBaseName.contains("{index}") {
+                newBaseName = newBaseName.replacingOccurrences(of: "{index}", with: "\(index)")
+            } else if newBaseName.contains("{i}") {
+                newBaseName = newBaseName.replacingOccurrences(of: "{i}", with: "\(index)")
+            } else if ids.count > 1 {
+                // If no token was provided but multiple files selected, append _#
+                newBaseName = "\(newBaseName)_\(index)"
+            }
+            
+            let finalName = ext.isEmpty ? newBaseName : "\(newBaseName).\(ext)"
+            let targetURL = directory.appendingPathComponent(finalName)
+            
+            // Perform file system rename if file exists
+            if fm.fileExists(atPath: originalItem.outputURL.path)
+                && originalItem.outputURL.path != targetURL.path
+                && !fm.fileExists(atPath: targetURL.path) {
+                do {
+                    try fm.moveItem(at: originalItem.outputURL, to: targetURL)
+                    recentResults[i].outputURL = targetURL
+                } catch {
+                    // Keep history pointing at the file that still exists.
+                }
+            }
+            
+            index += 1
+        }
+        flushHistory()
+    }
+    
+    private func saveFolders() {
+        if let data = try? JSONEncoder().encode(customFolders) {
+            UserDefaults.standard.set(data, forKey: Keys.customFolders)
+        }
+    }
+    
+    private func loadFolders() {
+        if let data = UserDefaults.standard.data(forKey: Keys.customFolders),
+           let list = try? JSONDecoder().decode([CompressionFolder].self, from: data) {
+            self.customFolders = list
+        }
+    }
+    
+    // MARK: - Configuration Getter
+    public func currentConfiguration() -> CompressionConfiguration {
+        CompressionConfiguration(
+            imageQuality: imageQualitySlider,
+            imageResolutionScale: imageResolutionScale,
+            imageFormatPolicy: imageFormatPolicy,
+            videoQuality: videoQualitySlider,
+            videoResolutionScale: videoResolutionScale,
+            videoCodec: videoCodec,
+            videoFramerate: videoFramerate,
+            videoRemoveAudio: videoRemoveAudio,
+            gifFramerate: gifFramerate,
+            audioBitrate: audioBitrate,
+            pdfDPI: pdfDPI,
+            pdfImageQuality: pdfImageQuality,
+            pdfGrayscale: pdfGrayscale,
+            pdfStripMetadata: pdfStripMetadata,
+            targetSizeMode: targetSizeMode,
+            customTargetSizeMB: customTargetSizeMB,
+            preserveResolutionInTargetMode: preserveResolutionInTargetMode,
+            preserveAudioQualityInTargetMode: preserveAudioQualityInTargetMode,
+            suffix: outputSuffix.isEmpty ? "_min" : outputSuffix,
+            customOutputFolder: customOutputFolder,
+            exportToSubfolder: exportToSubfolder,
+            subfolderName: subfolderName.isEmpty ? "Squeezed" : subfolderName,
+            stripMetadata: stripMetadata
+        )
+    }
+    
+    // MARK: - Clipboard Squeeze Action
+    @MainActor
+    public func squeezeClipboard() {
+        let pasteboard = NSPasteboard.general
+        
+        // 1. Check for file URLs first
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [NSPasteboard.ReadingOptionKey.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+            Task {
+                await MediaCompressionEngine.shared.processDroppedURLs(urls)
+            }
+            return
+        }
+        
+        // 2. Check for image data (e.g. screenshot copied to clipboard)
+        if let rawData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
+            let pngData: Data
+            if pasteboard.data(forType: .png) != nil {
+                pngData = rawData
+            } else if let rep = NSBitmapImageRep(data: rawData),
+                      let converted = rep.representation(using: .png, properties: [:]) {
+                pngData = converted
+            } else {
+                pngData = rawData
+            }
+            
+            let tempSource = FileManager.default.temporaryDirectory.appendingPathComponent("clipboard_temp_\(UUID().uuidString).png")
+            do {
+                try pngData.write(to: tempSource)
+            } catch {
+                recordFailure(fileName: String(localized: "Clipboard"), message: error.localizedDescription)
+                return
+            }
+            
+            Task { @MainActor in
+                defer { try? FileManager.default.removeItem(at: tempSource) }
+                await MediaCompressionEngine.shared.processDroppedURLs([tempSource])
+                if let result = self.recentResults.first(where: { $0.originalURL == tempSource }),
+                   let compressedData = try? Data(contentsOf: result.outputURL) {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    if let compressedImage = NSImage(data: compressedData) {
+                        pb.writeObjects([compressedImage, result.outputURL as NSURL])
+                    } else {
+                        pb.writeObjects([result.outputURL as NSURL])
+                    }
+                }
+            }
+            return
+        }
+        
+        recordFailure(fileName: String(localized: "Clipboard"), message: String(localized: "Clipboard has no image or files"))
+    }
+    
+    // MARK: - Job Management
+    public func addJob(_ job: CompressionJob) {
+        jobs.activeJobs.append(job)
+        updateProcessingState()
+    }
+    
+    public func updateJob(id: UUID, progress: Double, statusText: String) {
+        if let idx = jobs.activeJobs.firstIndex(where: { $0.id == id }) {
+            jobs.activeJobs[idx].progress = progress
+            if !jobs.activeJobs[idx].isPaused {
+                jobs.activeJobs[idx].statusText = statusText
+            }
+            updateProcessingState()
+        }
+    }
+    
+    public func finishJob(id: UUID, result: CompressionResult?, error: String?, statusOverride: String? = nil) {
+        JobControlRegistry.shared.remove(id)
+        if let idx = jobs.activeJobs.firstIndex(where: { $0.id == id }) {
+            jobs.activeJobs[idx].isFinished = true
+            jobs.activeJobs[idx].isPaused = false
+            jobs.activeJobs[idx].error = error
+            if let result = result {
+                jobs.activeJobs[idx].statusText = String(localized: "Saved \(result.formattedSaved) (-\(Int(result.percentSaved))%)")
+                jobs.activeJobs[idx].progress = 1.0
+                recordResult(result)
+            } else if let statusOverride {
+                jobs.activeJobs[idx].statusText = statusOverride
+                jobs.activeJobs[idx].progress = 1.0
+            } else if error == "Cancelled" {
+                jobs.activeJobs[idx].statusText = String(localized: "Cancelled")
+            } else {
+                jobs.activeJobs[idx].statusText = error ?? String(localized: "Failed")
+                if let error {
+                    recordFailure(fileName: jobs.activeJobs[idx].fileURL.lastPathComponent, message: error)
+                }
+            }
+        }
+        
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            self.jobs.activeJobs.removeAll { $0.id == id }
+            self.updateProcessingState()
+        }
+        
+        updateProcessingState()
+    }
+    
+    // MARK: - Pause / Resume
+    public var hasPausableJobs: Bool {
+        jobs.activeJobs.contains { !$0.isFinished && $0.canPause }
+    }
+    
+    public var areAllPausableJobsPaused: Bool {
+        let pausable = jobs.activeJobs.filter { !$0.isFinished && $0.canPause }
+        return !pausable.isEmpty && pausable.allSatisfy { $0.isPaused }
+    }
+    
+    public func pauseJob(id: UUID) {
+        guard let idx = jobs.activeJobs.firstIndex(where: { $0.id == id }),
+              jobs.activeJobs[idx].canPause, !jobs.activeJobs[idx].isFinished else { return }
+        JobControlRegistry.shared.control(for: id).pause()
+        jobs.activeJobs[idx].isPaused = true
+        jobs.activeJobs[idx].statusText = String(localized: "Paused")
+    }
+    
+    public func resumeJob(id: UUID) {
+        guard let idx = jobs.activeJobs.firstIndex(where: { $0.id == id }), jobs.activeJobs[idx].isPaused else { return }
+        JobControlRegistry.shared.control(for: id).resume()
+        jobs.activeJobs[idx].isPaused = false
+        jobs.activeJobs[idx].statusText = String(localized: "Resuming...")
+    }
+    
+    public func pauseAllJobs() {
+        for job in jobs.activeJobs where job.canPause && !job.isFinished && !job.isPaused {
+            pauseJob(id: job.id)
+        }
+    }
+    
+    public func resumeAllJobs() {
+        for job in jobs.activeJobs where job.isPaused {
+            resumeJob(id: job.id)
+        }
+    }
+    
+    public func cancelJob(id: UUID) {
+        guard let idx = jobs.activeJobs.firstIndex(where: { $0.id == id }),
+              !jobs.activeJobs[idx].isFinished else { return }
+        // Stop the encode immediately instead of waiting for the engine actor.
+        JobControlRegistry.shared.control(for: id).cancel()
+        jobs.activeJobs[idx].isPaused = false
+        jobs.activeJobs[idx].isFinished = true
+        jobs.activeJobs[idx].error = "Cancelled"
+        jobs.activeJobs[idx].statusText = String(localized: "Cancelled")
+        updateProcessingState()
+        
+        Task {
+            await MediaCompressionEngine.shared.cancelJob(id: id)
+        }
+        
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            self.jobs.activeJobs.removeAll { $0.id == id }
+            self.updateProcessingState()
+        }
+    }
+    
+    public func cancelAllJobs() {
+        for job in jobs.activeJobs where !job.isFinished {
+            JobControlRegistry.shared.control(for: job.id).cancel()
+        }
+        for idx in jobs.activeJobs.indices {
+            if !jobs.activeJobs[idx].isFinished {
+                jobs.activeJobs[idx].isPaused = false
+                jobs.activeJobs[idx].isFinished = true
+                jobs.activeJobs[idx].error = "Cancelled"
+                jobs.activeJobs[idx].statusText = String(localized: "Cancelled")
+            }
+        }
+        updateProcessingState()
+        
+        Task {
+            await MediaCompressionEngine.shared.cancelAllJobs()
+        }
+        
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            self.jobs.activeJobs.removeAll { $0.isFinished }
+            self.updateProcessingState()
+        }
+    }
+    
+    private func updateProcessingState() {
+        let unfinished = jobs.activeJobs.filter { !$0.isFinished }
+        let newIsProcessing = !unfinished.isEmpty
+        if jobs.isProcessing != newIsProcessing {
+            jobs.isProcessing = newIsProcessing
+        }
+        let newProgress: Double
+        if unfinished.isEmpty {
+            newProgress = 0.0
+        } else {
+            let total = unfinished.reduce(0.0) { $0 + $1.progress }
+            newProgress = total / Double(unfinished.count)
+        }
+        if jobs.overallProgress != newProgress {
+            jobs.overallProgress = newProgress
+        }
+    }
+    
+    public func reportNoSupportedFiles(urls: [URL]) {
+        let name: String
+        if let first = urls.first, !first.lastPathComponent.isEmpty {
+            name = urls.count == 1 ? first.lastPathComponent : "\(first.lastPathComponent) (+\(urls.count - 1))"
+        } else {
+            name = String(localized: "No supported files")
+        }
+        recordFailure(fileName: name, message: String(localized: "No supported files"))
+    }
+    
+    /// Keeps failed files visible after their job row disappears, and surfaces the error on the DropBall.
+    private func recordFailure(fileName: String, message: String) {
+        failedJobs.insert(FailedJob(fileName: fileName, message: message), at: 0)
+        if failedJobs.count > 5 {
+            failedJobs.removeLast()
+        }
+        
+        showFailureBadge = true
+        showSuccessBadge = false
+        if hapticEnabled {
+            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+        }
+        // Pop the ball out of its tucked state so the error is visible, then let it tuck away again.
+        LiquidBallModel.shared.revealFromTuck()
+        LiquidBallModel.shared.scheduleAutoTuck(afterSeconds: 3.5)
+        
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            self.showFailureBadge = false
+        }
+    }
+    
+    public func dismissFailure(id: UUID) {
+        failedJobs.removeAll { $0.id == id }
+    }
+    
+    public func clearFailures() {
+        failedJobs.removeAll()
+    }
+    
+    public func triggerSuccessBadge() {
+        showSuccessBadge = true
+        
+        // Play pleasing completion sound
+        if soundEnabled {
+            let soundName = soundTheme.systemSoundName
+            NSSound(named: soundName)?.play()
+        }
+        
+        if hapticEnabled {
+            NSHapticFeedbackManager.defaultPerformer.perform(
+                .alignment,
+                performanceTime: .default
+            )
+        }
+        
+        Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            self.showSuccessBadge = false
+        }
+    }
+    
+    // MARK: - History & Persistence
+    private var historySaveTask: Task<Void, Never>?
+    private var historyDirty = false
+    
+    public func recordResult(_ result: CompressionResult) {
+        recentResults.insert(result, at: 0)
+        if recentResults.count > 50 {
+            recentResults.removeLast()
+        }
+        
+        totalBytesSaved += result.bytesSaved
+        totalOriginalBytes += result.originalSize
+        totalFilesProcessed += 1
+        
+        UserDefaults.standard.set(totalBytesSaved, forKey: Keys.totalBytesSaved)
+        UserDefaults.standard.set(totalOriginalBytes, forKey: Keys.totalOriginalBytes)
+        UserDefaults.standard.set(totalFilesProcessed, forKey: Keys.totalFilesProcessed)
+        
+        saveHistory()
+    }
+    
+    public func clearHistory() {
+        recentResults.removeAll()
+        flushHistory()
+    }
+    
+    public func resetAllStats() {
+        historySaveTask?.cancel()
+        historySaveTask = nil
+        historyDirty = false
+        totalBytesSaved = 0
+        totalOriginalBytes = 0
+        totalFilesProcessed = 0
+        recentResults.removeAll()
+        UserDefaults.standard.removeObject(forKey: Keys.totalBytesSaved)
+        UserDefaults.standard.removeObject(forKey: Keys.totalOriginalBytes)
+        UserDefaults.standard.removeObject(forKey: Keys.totalFilesProcessed)
+        UserDefaults.standard.removeObject(forKey: Keys.historyList)
+    }
+    
+    private func saveHistory() {
+        historyDirty = true
+        historySaveTask?.cancel()
+        historySaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.flushHistory()
+        }
+    }
+    
+    /// Immediately persists `recentResults` if a debounced save is pending (or unconditionally when called directly).
+    public func flushHistory() {
+        historySaveTask?.cancel()
+        historySaveTask = nil
+        historyDirty = false
+        if let data = try? JSONEncoder().encode(recentResults) {
+            UserDefaults.standard.set(data, forKey: Keys.historyList)
+        }
+    }
+    
+    private func loadHistory() {
+        if let data = UserDefaults.standard.data(forKey: Keys.historyList),
+           let list = try? JSONDecoder().decode([CompressionResult].self, from: data) {
+            self.recentResults = list
+        }
+    }
+    
+    public func revealInFinder(url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+}

@@ -1,0 +1,223 @@
+import SwiftUI
+import AppKit
+
+// MARK: - Striped "S" Mark
+// Five rounded bars whose left/right stubs form an S. Same geometry as the app icon
+// (see scripts/generate_app_icon.swift). Name kept from the old clamp logo.
+public struct SqueezeClampShape: Shape {
+    public init() {}
+
+    /// Bars as (x0, x1, y) in a 1024 design grid; all bars are `barHeight` tall.
+    private static let bars: [(CGFloat, CGFloat, CGFloat)] = [
+        (290, 800, 170),
+        (224, 484, 312),
+        (224, 800, 454),
+        (540, 800, 596),
+        (224, 734, 738)
+    ]
+    private static let barHeight: CGFloat = 116
+    private static let designRect = CGRect(x: 224, y: 170, width: 576, height: 684)
+
+    public static let barCount = bars.count
+
+    /// Path for a single bar, so callers can style each one separately.
+    public func barPath(_ index: Int, in rect: CGRect) -> Path {
+        let (x0, x1, y) = Self.bars[index]
+        let design = Self.designRect
+        let scale = min(rect.width / design.width, rect.height / design.height)
+        let ox = rect.midX - design.width * scale / 2
+        let oy = rect.midY - design.height * scale / 2
+        let radius = Self.barHeight * scale / 2
+        let bar = CGRect(
+            x: ox + (x0 - design.minX) * scale,
+            y: oy + (y - design.minY) * scale,
+            width: (x1 - x0) * scale,
+            height: Self.barHeight * scale
+        )
+        return Path(roundedRect: bar, cornerSize: CGSize(width: radius, height: radius))
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for i in 0..<Self.barCount { path.addPath(barPath(i, in: rect)) }
+        return path
+    }
+}
+
+// MARK: - Scanning Wave
+/// The S mark with a slow, soft light that sweeps top to bottom: each bar brightens a little as the
+/// wave passes, then eases back down. Static when Reduce Motion is on.
+struct SqueezeWaveMark: View {
+    /// Resting colour of the bars.
+    var base: Color = .white
+    /// Colour a bar glows toward as the wave passes over it.
+    var lit: Color = .white
+    var restOpacity: Double = 0.20
+    var peakOpacity: Double = 0.50
+    /// Seconds for one full sweep, including a short rest before the next.
+    var period: Double = 6.0
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The popover and detached window keep their views alive while ordered out, so the timeline
+    /// would tick forever unless paused when the window isn't on screen.
+    @State private var windowVisible = false
+
+    var body: some View {
+        if reduceMotion {
+            marks(time: nil)
+        } else {
+            TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !windowVisible)) { context in
+                marks(time: context.date.timeIntervalSinceReferenceDate)
+            }
+            .background(WindowVisibilityReader(isVisible: $windowVisible))
+        }
+    }
+
+    private func marks(time: Double?) -> some View {
+        GeometryReader { proxy in
+            let rect = CGRect(origin: .zero, size: proxy.size)
+            let shape = SqueezeClampShape()
+            ZStack {
+                ForEach(0..<SqueezeClampShape.barCount, id: \.self) { i in
+                    let level = level(forBar: i, time: time)
+                    shape.barPath(i, in: rect)
+                        .fill(base.mix(with: lit, by: level).opacity(restOpacity + (peakOpacity - restOpacity) * level))
+                }
+            }
+        }
+    }
+
+    /// 0 at rest, 1 when the wave is centred on bar `i`, eased in between.
+    private func level(forBar i: Int, time: Double?) -> Double {
+        guard let time else { return 0 }
+        let n = Double(SqueezeClampShape.barCount)
+        // Wave centre travels from above the first bar to below the last, then rests.
+        let phase = (time.truncatingRemainder(dividingBy: period)) / period
+        let sweep = min(phase / 0.75, 1.0)
+        let centre = -1.0 + sweep * (n + 1.0)
+        let d = abs(Double(i) - centre)
+        let width = 1.3
+        let t = max(0, 1 - d / width)
+        return t * t * (3 - 2 * t)
+    }
+}
+
+/// Reports whether the hosting window is on screen and not fully covered.
+private struct WindowVisibilityReader: NSViewRepresentable {
+    @Binding var isVisible: Bool
+
+    func makeNSView(context: Context) -> Probe {
+        let view = Probe()
+        view.onChange = { visible in
+            if isVisible != visible { isVisible = visible }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: Probe, context: Context) {}
+
+    final class Probe: NSView {
+        var onChange: ((Bool) -> Void)?
+        private var observer: NSObjectProtocol?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = nil
+            if let window {
+                observer = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.report() }
+                }
+            }
+            // Deferred: this runs inside SwiftUI's view update, where state can't change.
+            DispatchQueue.main.async { [weak self] in self?.report() }
+        }
+
+        private func report() {
+            onChange?(window?.occlusionState.contains(.visible) ?? false)
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+    }
+}
+
+// MARK: - Progress Fill
+/// The S mark as a progress indicator: dim at rest, each bar brightening in turn from the top as `progress` goes 0 to 1.
+struct SqueezeProgressMark: View {
+    var progress: Double
+    var color: Color = .white
+    /// Unlit bars. A neutral tone reads better than a faded `color` on glass.
+    var restColor: Color = Color.white.opacity(0.28)
+
+    var body: some View {
+        GeometryReader { proxy in
+            let rect = CGRect(origin: .zero, size: proxy.size)
+            ZStack {
+                SqueezeClampShape().fill(restColor)
+                ForEach(0..<SqueezeClampShape.barCount, id: \.self) { i in
+                    SqueezeClampShape().barPath(i, in: rect)
+                        .fill(color.opacity(SqueezeClampShape.barLevel(i, progress: progress)))
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.35), value: progress)
+    }
+}
+
+public extension SqueezeClampShape {
+    /// How lit bar `index` is (0...1) for a job progress. Bars light one after another; the first is
+    /// never fully dark so a new job reads as started.
+    static func barLevel(_ index: Int, progress: Double) -> Double {
+        let p = min(max(progress, 0.04), 1.0)
+        return min(max(p * Double(barCount) - Double(index), 0), 1)
+    }
+
+    /// Single-colour variant: opacity from `rest` up to 1.
+    static func barOpacity(_ index: Int, progress: Double, rest: Double = 0.28) -> Double {
+        rest + (1 - rest) * barLevel(index, progress: progress)
+    }
+}
+
+// MARK: - AppKit Drawing Helper
+public extension NSImage {
+    static func squeezeClampImage(size: CGFloat = 18, color: NSColor = .white) -> NSImage {
+        let img = NSImage(size: NSSize(width: size, height: size))
+        img.lockFocus()
+
+        let rect = NSRect(x: 0, y: 0, width: size, height: size)
+        // Shape paths are y-down; the lockFocus context is y-up.
+        let flip = CGAffineTransform(translationX: 0, y: size).scaledBy(x: 1, y: -1)
+        let path = SqueezeClampShape().path(in: rect).cgPath.copy(using: [flip]) ?? SqueezeClampShape().path(in: rect).cgPath
+
+        color.setFill()
+        let cgContext = NSGraphicsContext.current?.cgContext
+        cgContext?.addPath(path)
+        cgContext?.fillPath()
+
+        img.unlockFocus()
+        img.isTemplate = true
+        return img
+    }
+
+    /// AppKit twin of `SqueezeProgressMark` for the menu bar.
+    static func squeezeProgressImage(size: CGFloat = 18, color: NSColor = .white, progress: Double) -> NSImage {
+        let img = NSImage(size: NSSize(width: size, height: size))
+        img.lockFocus()
+        let rect = NSRect(x: 0, y: 0, width: size, height: size)
+        // Shape paths are y-down; the lockFocus context is y-up.
+        var flip = CGAffineTransform(translationX: 0, y: size).scaledBy(x: 1, y: -1)
+        let context = NSGraphicsContext.current?.cgContext
+        for i in 0..<SqueezeClampShape.barCount {
+            let bar = SqueezeClampShape().barPath(i, in: rect).cgPath
+            context?.addPath(bar.copy(using: &flip) ?? bar)
+            context?.setFillColor(color.withAlphaComponent(SqueezeClampShape.barOpacity(i, progress: progress)).cgColor)
+            context?.fillPath()
+        }
+        img.unlockFocus()
+        return img
+    }
+}

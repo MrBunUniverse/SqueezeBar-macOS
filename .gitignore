@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+**/.build/
+SqueezeBar.app/
+*.xcodeproj
+*.xcworkspace
+.swiftpm/
+dist/
+**/dist/
+*.dmg

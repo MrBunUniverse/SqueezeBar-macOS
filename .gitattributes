@@ -1,0 +1,2 @@
+# Ignore tooling scripts from repository language statistics
+scripts/** linguist-vendored
