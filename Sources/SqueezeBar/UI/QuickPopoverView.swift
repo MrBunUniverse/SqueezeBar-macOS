@@ -2852,7 +2852,7 @@ public struct QuickPopoverView: View {
     // MARK: - Footer
     private var footerView: some View {
         HStack {
-            Text("SqueezeBar v1.2.4")
+            Text("SqueezeBar v1.2.5")
                 .font(.system(size: 10.5, design: .rounded))
                 .foregroundColor(.secondary)
             
