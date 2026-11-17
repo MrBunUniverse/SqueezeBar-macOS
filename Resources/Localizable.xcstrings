@@ -141,9 +141,6 @@
     "192 kbps (High)" : {
 
     },
-    "192 kbps (Quality)" : {
-
-    },
     "2 MB (Fast Web)" : {
 
     },
@@ -166,9 +163,6 @@
 
     },
     "256 kbps" : {
-
-    },
-    "256 kbps (High)" : {
 
     },
     "256 kbps (Studio)" : {
@@ -195,9 +189,6 @@
     "320 kbps (Max)" : {
 
     },
-    "320 kbps (Studio)" : {
-
-    },
     "50 FPS" : {
 
     },
@@ -216,9 +207,6 @@
     "64 kbps" : {
 
     },
-    "64 kbps (Compact)" : {
-
-    },
     "64 kbps (Voice)" : {
 
     },
@@ -229,6 +217,12 @@
 
     },
     "75%" : {
+
+    },
+    "8 kbps" : {
+
+    },
+    "8 kbps (Phone Call)" : {
 
     },
     "8-Bit" : {
@@ -688,9 +682,6 @@
     "HEX code" : {
 
     },
-    "Haptic feedback on completion" : {
-
-    },
     "Hero" : {
 
     },
@@ -1136,7 +1127,7 @@
     "SqueezeBar DropBall" : {
 
     },
-    "SqueezeBar v1.2.1 • SirJameTV" : {
+    "SqueezeBar v1.2.2" : {
 
     },
     "Squeezed" : {
