@@ -23,41 +23,35 @@ public final class LiquidBallModel: ObservableObject {
     @Published public var dockEdge: DockEdge = .right
     @Published public var isTucked: Bool = true
     @Published public var isSummoned: Bool = false
-    /// Set at the end of the quit pop: the orb is gone and only its droplets are drawn.
+    /// Driven by `BallAppearanceCurve` in `FloatingBallController` so appear/dismiss animations are deterministic and cancellable.
+    @Published public var appearanceScale: CGFloat = 1.0
+    @Published public var appearanceOpacity: CGFloat = 1.0
+    @Published public var burstProgress: CGFloat = 0.0
+    @Published public var burstBaseScale: CGFloat = 1.14
+    /// Set during the shrink/burst phase of pop-out so the expanding ring and droplets render around the shrinking orb.
     @Published public private(set) var isBurst: Bool = false
-    
-    static let swellDuration: Double = 0.10
-    static let burstDuration: Double = 0.30
-    
+    /// True while a pop-out/fade-out dismiss animation is running before ordering out the panel.
+    @Published public var isDismissing: Bool = false
+
     private var tuckTimerTask: Task<Void, Never>?
-    
-    // MARK: - Launch Inflate & Quit Pop
-    
-    /// Grows the ball in from a speck when the app launches.
-    public func inflateIn() {
-        // Never 0: FloatingBallHostingView.hitTest divides by these.
-        scaleX = 0.05
-        scaleY = 0.05
-        Task { @MainActor in
-            // Let the collapsed ball render once, otherwise there is nothing to animate from.
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            withAnimation(.spring(response: 0.5, dampingFraction: 0.55)) {
-                self.scaleX = 1.0
-                self.scaleY = 1.0
-            }
-        }
+
+    public init() {}
+
+    public func apply(_ sample: BallAppearanceCurve.Sample, burstBaseScale: CGFloat = 1.14) {
+        if appearanceScale != sample.scale { appearanceScale = sample.scale }
+        if appearanceOpacity != sample.opacity { appearanceOpacity = sample.opacity }
+        if burstProgress != sample.burstProgress { burstProgress = sample.burstProgress }
+        if self.burstBaseScale != burstBaseScale { self.burstBaseScale = burstBaseScale }
+        if isBurst != sample.isBurst { isBurst = sample.isBurst }
     }
-    
-    /// Swells the ball, then bursts it into droplets. Returns once the droplets have faded.
-    public func playPop() async {
-        cancelTuckTimer()
-        withAnimation(.easeOut(duration: Self.swellDuration)) {
-            scaleX = 1.18
-            scaleY = 1.18
-        }
-        try? await Task.sleep(nanoseconds: UInt64(Self.swellDuration * 1_000_000_000))
-        isBurst = true
-        try? await Task.sleep(nanoseconds: UInt64(Self.burstDuration * 1_000_000_000))
+
+    public func resetAppearance() {
+        appearanceScale = 1.0
+        appearanceOpacity = 1.0
+        burstProgress = 0.0
+        burstBaseScale = 1.14
+        isBurst = false
+        isDismissing = false
     }
     
     public func applyMotionVelocity(dx: CGFloat, dy: CGFloat) {
@@ -135,21 +129,17 @@ public enum BallGlideCurve: Sendable {
     case snapEaseOut(duration: TimeInterval)
     case softSpring(response: TimeInterval, dampingRatio: Double, settleDuration: TimeInterval)
     case reduceMotionCrossFade(duration: TimeInterval)
-    case fade(from: CGFloat, to: CGFloat, duration: TimeInterval)
 
     public static let snapDefault = BallGlideCurve.snapEaseOut(duration: 0.24)
     /// Peaks at ~0.40 s and settles completely by 0.70 s (< 0.8 s).
     public static let summonSpring = BallGlideCurve.softSpring(response: 0.48, dampingRatio: 0.80, settleDuration: 0.70)
     public static let reduceMotionDefault = BallGlideCurve.reduceMotionCrossFade(duration: 0.28)
-    public static let fadeInDefault = BallGlideCurve.fade(from: 0.0, to: 1.0, duration: 0.18)
-    public static let fadeOutDefault = BallGlideCurve.fade(from: 1.0, to: 0.0, duration: 0.18)
 
     public var duration: TimeInterval {
         switch self {
         case .snapEaseOut(let duration): return duration
         case .softSpring(_, _, let settleDuration): return settleDuration
         case .reduceMotionCrossFade(let duration): return duration
-        case .fade(_, _, let duration): return duration
         }
     }
 
@@ -197,12 +187,119 @@ public enum BallGlideCurve: Sendable {
             } else {
                 return Sample(positionProgress: 1.0, alpha: CGFloat((p - 0.5) * 2.0), isSettled: false)
             }
+        }
+    }
+}
 
-        case .fade(let from, let to, let duration):
-            let p = duration > 0 ? min(1.0, clampedElapsed / duration) : 1.0
-            let eased = 1.0 - pow(1.0 - p, 2.0)
-            let alpha = from + (to - from) * CGFloat(eased)
-            return Sample(positionProgress: 1.0, alpha: p >= 1.0 ? to : alpha, isSettled: p >= 1.0)
+// MARK: - Grow-In & Pop-Out Appearance Curves
+public enum BallAppearanceCurve: Sendable {
+    case growIn(
+        startScale: CGFloat = 0.28,
+        response: TimeInterval = 0.28,
+        dampingRatio: Double = 0.60,
+        settleDuration: TimeInterval = 0.46,
+        fadeDuration: TimeInterval = 0.18
+    )
+    case popOut(
+        fromScale: CGFloat = 1.0,
+        fromOpacity: CGFloat = 1.0,
+        swellScale: CGFloat = 1.14,
+        swellDuration: TimeInterval = 0.08,
+        shrinkDuration: TimeInterval = 0.18
+    )
+    case reduceMotionFadeIn(duration: TimeInterval = 0.18)
+    case reduceMotionFadeOut(fromOpacity: CGFloat = 1.0, duration: TimeInterval = 0.18)
+
+    public static let growInDefault = BallAppearanceCurve.growIn()
+    public static let popOutDefault = BallAppearanceCurve.popOut()
+    public static let reduceMotionFadeInDefault = BallAppearanceCurve.reduceMotionFadeIn()
+    public static let reduceMotionFadeOutDefault = BallAppearanceCurve.reduceMotionFadeOut()
+
+    public var duration: TimeInterval {
+        switch self {
+        case .growIn(_, _, _, let settleDuration, _):
+            return settleDuration
+        case .popOut(_, _, _, let swellDuration, let shrinkDuration):
+            return swellDuration + shrinkDuration
+        case .reduceMotionFadeIn(let duration):
+            return duration
+        case .reduceMotionFadeOut(_, let duration):
+            return duration
+        }
+    }
+
+    public var burstBaseScale: CGFloat {
+        switch self {
+        case .popOut(_, _, let swellScale, _, _):
+            return swellScale
+        case .growIn, .reduceMotionFadeIn, .reduceMotionFadeOut:
+            return 1.14
+        }
+    }
+
+    public struct Sample: Sendable {
+        public let scale: CGFloat
+        public let opacity: CGFloat
+        public let burstProgress: CGFloat
+        public let isBurst: Bool
+        public let isSettled: Bool
+    }
+
+    public func sample(at elapsed: TimeInterval) -> Sample {
+        let t = max(0, elapsed)
+        switch self {
+        case .growIn(let startScale, let response, let dampingRatio, let settleDuration, let fadeDuration):
+            let fadeP = fadeDuration > 0 ? min(1.0, t / fadeDuration) : 1.0
+            let opacity = CGFloat(1.0 - pow(1.0 - fadeP, 2.0))
+            if t >= settleDuration {
+                return Sample(scale: 1.0, opacity: 1.0, burstProgress: 0.0, isBurst: false, isSettled: true)
+            }
+            let omegaN = (2.0 * .pi) / max(0.01, response)
+            let zeta = min(0.999, max(0.05, dampingRatio))
+            let root = sqrt(1.0 - zeta * zeta)
+            let omegaD = omegaN * root
+            let decay = exp(-zeta * omegaN * t)
+            let raw = 1.0 - decay * (cos(omegaD * t) + (zeta / root) * sin(omegaD * t))
+            let tailWindow = min(0.05, settleDuration * 0.1)
+            let tailStart = settleDuration - tailWindow
+            let progress: Double
+            if t > tailStart, tailWindow > 0 {
+                let blend = (t - tailStart) / tailWindow
+                progress = raw + (1.0 - raw) * blend
+            } else {
+                progress = raw
+            }
+            let scale = startScale + (1.0 - startScale) * CGFloat(progress)
+            return Sample(scale: scale, opacity: opacity, burstProgress: 0.0, isBurst: false, isSettled: false)
+
+        case .popOut(let fromScale, let fromOpacity, let swellScale, let swellDuration, let shrinkDuration):
+            let total = swellDuration + shrinkDuration
+            if t >= total {
+                return Sample(scale: 0.0, opacity: 0.0, burstProgress: 1.0, isBurst: true, isSettled: true)
+            }
+            if t < swellDuration {
+                let p = swellDuration > 0 ? t / swellDuration : 1.0
+                let eased = 1.0 - pow(1.0 - p, 2.0)
+                let scale = fromScale + (swellScale - fromScale) * CGFloat(eased)
+                let opacity = fromOpacity + (1.0 - fromOpacity) * CGFloat(eased)
+                return Sample(scale: scale, opacity: opacity, burstProgress: 0.0, isBurst: false, isSettled: false)
+            } else {
+                let p = shrinkDuration > 0 ? min(1.0, (t - swellDuration) / shrinkDuration) : 1.0
+                let scaleEase = 1.0 - pow(1.0 - p, 1.8)
+                let scale = swellScale * CGFloat(max(0.0, 1.0 - scaleEase))
+                let opacity = CGFloat(max(0.0, 1.0 - pow(p, 1.35)))
+                return Sample(scale: scale, opacity: opacity, burstProgress: CGFloat(p), isBurst: true, isSettled: false)
+            }
+
+        case .reduceMotionFadeIn(let duration):
+            let p = duration > 0 ? min(1.0, t / duration) : 1.0
+            let opacity = CGFloat(1.0 - pow(1.0 - p, 2.0))
+            return Sample(scale: 1.0, opacity: p >= 1.0 ? 1.0 : opacity, burstProgress: 0.0, isBurst: false, isSettled: p >= 1.0)
+
+        case .reduceMotionFadeOut(let fromOpacity, let duration):
+            let p = duration > 0 ? min(1.0, t / duration) : 1.0
+            let opacity = fromOpacity * CGFloat(pow(1.0 - p, 2.0))
+            return Sample(scale: 1.0, opacity: p >= 1.0 ? 0.0 : opacity, burstProgress: 0.0, isBurst: false, isSettled: p >= 1.0)
         }
     }
 }
@@ -216,6 +313,9 @@ public final class FloatingBallHostingView: NSHostingView<FloatingBallView> {
 
     public override func hitTest(_ point: NSPoint) -> NSView? {
         let model = LiquidBallModel.shared
+        guard !model.isDismissing, model.appearanceOpacity >= 0.05, model.appearanceScale >= 0.05 else {
+            return nil
+        }
         let state = AppState.shared
         let isTucked = model.isTucked && !model.isHovered && !state.isProcessing && !model.isMoving && !model.isSummoned
         let hoverScale: CGFloat = 1.15
@@ -224,11 +324,13 @@ public final class FloatingBallHostingView: NSHostingView<FloatingBallView> {
         let offset = (model.isMoving || model.isSummoned) ? 0 : (isTucked ? FloatingBallController.tuckedOffset : -popoutOffset) * (model.dockEdge == .right ? 1 : -1)
         let scaleX = (isTucked ? FloatingBallController.tuckedScaleX : (model.isHovered ? hoverScale : 1)) * model.scaleX
         let scaleY = (isTucked ? 1.06 : (model.isHovered ? hoverScale : 1)) * model.scaleY
+        let effectiveScaleX = scaleX * model.appearanceScale
+        let effectiveScaleY = scaleY * model.appearanceScale
         let localPoint = convert(point, from: superview)
         let center = CGPoint(x: FloatingBallController.panelSize / 2 + offset * scaleX, y: FloatingBallController.panelSize / 2)
         let unscaledPoint = CGPoint(
-            x: center.x + (localPoint.x - center.x) / scaleX,
-            y: center.y + (localPoint.y - center.y) / scaleY
+            x: center.x + (localPoint.x - center.x) / effectiveScaleX,
+            y: center.y + (localPoint.y - center.y) / effectiveScaleY
         )
         let ballRect = CGRect(
             x: center.x - FloatingBallController.orbSize / 2,
@@ -334,6 +436,9 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
     private var ballPanel: NSPanel?
     private var ballSize: CGFloat { Self.panelSize }
     private var snapTimer: Timer?
+    private var appearanceTimer: Timer?
+    private var appearanceGeneration: UInt64 = 0
+    private var quitPopContinuation: CheckedContinuation<Void, Never>?
 
     // Shake-to-summon state
     private var globalDragMonitor: Any?
@@ -348,7 +453,6 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
     private var summonedInPlace: Bool = false
     private var dropInitiated: Bool = false
     private var sawProcessingSinceSummon: Bool = false
-    private var isProgrammaticOriginChange: Bool = false
 
     private var processingCancellable: AnyCancellable?
     private var returnDelayTask: Task<Void, Never>?
@@ -535,12 +639,25 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
             visibleFrame: visibleFrame
         )
 
+        let wasVisible = (ballPanel?.isVisible == true && !LiquidBallModel.shared.isDismissing)
+        cancelAppearanceAnimation()
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
         if AppState.shared.floatingBallEnabled {
             if ballPanel == nil {
                 createPanel()
             }
+            let appearCurve: BallAppearanceCurve = reduceMotion ? .reduceMotionFadeInDefault : .growInDefault
+            if !wasVisible {
+                LiquidBallModel.shared.apply(appearCurve.sample(at: 0), burstBaseScale: appearCurve.burstBaseScale)
+            }
+            ballPanel?.alphaValue = 1.0
             ballPanel?.level = .floating
             ballPanel?.orderFrontRegardless()
+            if !wasVisible {
+                animateAppearance(curve: appearCurve)
+            }
+            playHapticPair(.alignment, .levelChange)
 
             if !isSummoned && !Self.shouldSummonMove(currentOrbCenter: currentVisibleOrbCenter(), cursor: cursor) {
                 cancelSummonTasks()
@@ -566,12 +683,21 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
             LiquidBallModel.shared.revealFromTuck()
             installSummonObservers()
 
-            let curve: BallGlideCurve = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-                ? .reduceMotionDefault
-                : .summonSpring
-            animatePanel(to: targetOrigin, curve: curve, onComplete: { [weak self] in self?.beginMagnet() })
+            if !wasVisible && reduceMotion {
+                snapTimer?.invalidate()
+                snapTimer = nil
+                ballPanel?.setFrameOrigin(targetOrigin)
+                beginMagnet()
+            } else {
+                let curve: BallGlideCurve = reduceMotion
+                    ? .reduceMotionDefault
+                    : .summonSpring
+                animatePanel(to: targetOrigin, curve: curve, onComplete: { [weak self] in self?.beginMagnet() })
+            }
         } else {
             cancelSummonTasks()
+            snapTimer?.invalidate()
+            snapTimer = nil
             if ballPanel == nil {
                 createPanel()
             }
@@ -585,15 +711,18 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
             LiquidBallModel.shared.isTucked = false
             LiquidBallModel.shared.cancelTuckTimer()
 
-            isProgrammaticOriginChange = true
+            let appearCurve: BallAppearanceCurve = reduceMotion ? .reduceMotionFadeInDefault : .growInDefault
+            LiquidBallModel.shared.apply(appearCurve.sample(at: 0), burstBaseScale: appearCurve.burstBaseScale)
+
             ballPanel?.setFrameOrigin(targetOrigin)
-            isProgrammaticOriginChange = false
-            ballPanel?.alphaValue = 0.0
+            ballPanel?.alphaValue = 1.0
             ballPanel?.level = .floating
             ballPanel?.orderFrontRegardless()
             installSummonObservers()
-
-            animatePanel(to: targetOrigin, curve: .fadeInDefault, onComplete: { [weak self] in self?.beginMagnet() })
+            animateAppearance(curve: appearCurve, onComplete: { [weak self] in
+                self?.beginMagnet()
+            })
+            playHapticPair(.alignment, .levelChange)
         }
     }
 
@@ -633,9 +762,7 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
             stopMagnet()
             magnetPosition = anchor
             magnetTarget = anchor
-            isProgrammaticOriginChange = true
             panel.setFrameOrigin(anchor)
-            isProgrammaticOriginChange = false
             return
         }
         let cursor = NSEvent.mouseLocation
@@ -700,9 +827,7 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
             magnetVelocity.dx -= outward * nx
             magnetVelocity.dy -= outward * ny
         }
-        isProgrammaticOriginChange = true
         panel.setFrameOrigin(magnetPosition)
-        isProgrammaticOriginChange = false
         LiquidBallModel.shared.applyMotionVelocity(dx: magnetPosition.x - previous.x,
                                                   dy: magnetPosition.y - previous.y)
         if magnetPosition == magnetTarget && magnetVelocity == .zero {
@@ -881,16 +1006,7 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
         sawProcessingSinceSummon = false
 
         if isTemporarySummon || !AppState.shared.floatingBallEnabled {
-            let currentOrigin = ballPanel?.frame.origin ?? .zero
-            animatePanel(to: currentOrigin, curve: .fadeOutDefault, onComplete: { [weak self] in
-                guard let self = self else { return }
-                self.ballPanel?.orderOut(nil)
-                self.ballPanel?.alphaValue = 1.0
-                self.ballPanel = nil
-                self.isTemporarySummon = false
-                self.dockAnchor = nil
-                LiquidBallModel.shared.isSummoned = false
-            })
+            dismissWithPop(destroyPanel: true)
             return
         }
 
@@ -991,7 +1107,6 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
                 let elapsed = CACurrentMediaTime() - startTime
                 let sample = curve.sample(at: elapsed)
 
-                self.isProgrammaticOriginChange = true
                 if case .reduceMotionCrossFade = curve {
                     if sample.positionProgress >= 1.0 {
                         if !didRunMidpoint {
@@ -1008,7 +1123,6 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
                     let origin = CGPoint(x: curX, y: curY)
                     panel.setFrameOrigin(origin)
                 }
-                self.isProgrammaticOriginChange = false
 
                 panel.alphaValue = sample.alpha
 
@@ -1019,9 +1133,7 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
                         didRunMidpoint = true
                         onMidpoint?()
                     }
-                    self.isProgrammaticOriginChange = true
                     panel.setFrameOrigin(targetOrigin)
-                    self.isProgrammaticOriginChange = false
                     panel.alphaValue = sample.alpha
                     onComplete?()
                 }
@@ -1030,6 +1142,148 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
         snapTimer = timer
         RunLoop.main.add(timer, forMode: .common)
         RunLoop.main.add(timer, forMode: .eventTracking)
+    }
+
+    // MARK: - Appear / Dismiss Haptic & Animation
+
+    private static let hapticPairGap: TimeInterval = 0.07
+
+    private func playHapticPair(
+        _ first: NSHapticFeedbackManager.FeedbackPattern,
+        _ second: NSHapticFeedbackManager.FeedbackPattern
+    ) {
+        let generation = appearanceGeneration
+        NSHapticFeedbackManager.defaultPerformer.perform(first, performanceTime: .now)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hapticPairGap) { [weak self] in
+            guard let self, self.appearanceGeneration == generation else { return }
+            NSHapticFeedbackManager.defaultPerformer.perform(second, performanceTime: .now)
+        }
+    }
+
+    private func cancelAppearanceAnimation() {
+        appearanceGeneration &+= 1
+        appearanceTimer?.invalidate()
+        appearanceTimer = nil
+        LiquidBallModel.shared.isDismissing = false
+        if LiquidBallModel.shared.isBurst || LiquidBallModel.shared.burstProgress > 0 {
+            LiquidBallModel.shared.apply(
+                BallAppearanceCurve.Sample(scale: 1.0, opacity: 1.0, burstProgress: 0.0, isBurst: false, isSettled: true)
+            )
+        }
+        if let cont = quitPopContinuation {
+            quitPopContinuation = nil
+            cont.resume()
+        }
+    }
+
+    private func animateAppearance(
+        curve: BallAppearanceCurve,
+        onComplete: (@MainActor () -> Void)? = nil
+    ) {
+        appearanceGeneration &+= 1
+        let generation = appearanceGeneration
+        appearanceTimer?.invalidate()
+        appearanceTimer = nil
+
+        let model = LiquidBallModel.shared
+        model.apply(curve.sample(at: 0), burstBaseScale: curve.burstBaseScale)
+        let startTime = CACurrentMediaTime()
+
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self = self, self.appearanceGeneration == generation else {
+                    timer.invalidate()
+                    return
+                }
+                let elapsed = CACurrentMediaTime() - startTime
+                let sample = curve.sample(at: elapsed)
+                LiquidBallModel.shared.apply(sample, burstBaseScale: curve.burstBaseScale)
+
+                if sample.isSettled {
+                    timer.invalidate()
+                    self.appearanceTimer = nil
+                    onComplete?()
+                }
+            }
+        }
+        appearanceTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .eventTracking)
+    }
+
+    private func dismissWithPop(destroyPanel: Bool) {
+        guard let panel = ballPanel, panel.isVisible else {
+            cancelAppearanceAnimation()
+            ballPanel?.orderOut(nil)
+            ballPanel?.alphaValue = 1.0
+            if destroyPanel {
+                ballPanel = nil
+            }
+            isTemporarySummon = false
+            dockAnchor = nil
+            LiquidBallModel.shared.isSummoned = false
+            LiquidBallModel.shared.resetAppearance()
+            return
+        }
+
+        if LiquidBallModel.shared.isDismissing {
+            return
+        }
+
+        snapTimer?.invalidate()
+        snapTimer = nil
+
+        let model = LiquidBallModel.shared
+        model.cancelTuckTimer()
+        let currentScale = max(0.05, model.appearanceScale)
+        let currentOpacity = max(0.0, min(1.0, model.appearanceOpacity * panel.alphaValue))
+        panel.alphaValue = 1.0
+
+        let curve: BallAppearanceCurve = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .reduceMotionFadeOut(fromOpacity: currentOpacity)
+            : .popOut(fromScale: currentScale, fromOpacity: currentOpacity)
+
+        model.isDismissing = true
+        animateAppearance(curve: curve, onComplete: { [weak self] in
+            guard let self = self else { return }
+            self.ballPanel?.orderOut(nil)
+            self.ballPanel?.alphaValue = 1.0
+            if destroyPanel {
+                self.ballPanel = nil
+            }
+            self.isTemporarySummon = false
+            self.dockAnchor = nil
+            LiquidBallModel.shared.isSummoned = false
+            LiquidBallModel.shared.resetAppearance()
+        })
+        playHapticPair(.levelChange, .alignment)
+    }
+
+    public func playQuitPop() async {
+        guard let panel = ballPanel, panel.isVisible, !LiquidBallModel.shared.isDismissing else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            if let existing = quitPopContinuation {
+                quitPopContinuation = nil
+                existing.resume()
+            }
+            quitPopContinuation = continuation
+            LiquidBallModel.shared.cancelTuckTimer()
+            LiquidBallModel.shared.isDismissing = true
+            let currentScale = max(0.05, LiquidBallModel.shared.appearanceScale)
+            let currentOpacity = max(0.0, min(1.0, LiquidBallModel.shared.appearanceOpacity * panel.alphaValue))
+            panel.alphaValue = 1.0
+            let curve = BallAppearanceCurve.popOut(fromScale: currentScale, fromOpacity: currentOpacity)
+            animateAppearance(curve: curve, onComplete: { [weak self] in
+                guard let self = self else { return }
+                self.ballPanel?.orderOut(nil)
+                self.ballPanel?.alphaValue = 1.0
+                LiquidBallModel.shared.resetAppearance()
+                if let cont = self.quitPopContinuation {
+                    self.quitPopContinuation = nil
+                    cont.resume()
+                }
+            })
+        }
     }
     
     public func updateVisibility() {
@@ -1041,11 +1295,19 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
     }
     
     public func show() {
+        let wasVisible = (ballPanel?.isVisible == true && !LiquidBallModel.shared.isDismissing)
         isTemporarySummon = false
+        cancelAppearanceAnimation()
         if ballPanel == nil {
             createPanel()
         }
-        
+
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let appearCurve: BallAppearanceCurve = reduceMotion ? .reduceMotionFadeInDefault : .growInDefault
+        if !wasVisible {
+            LiquidBallModel.shared.apply(appearCurve.sample(at: 0), burstBaseScale: appearCurve.burstBaseScale)
+        }
+
         ballPanel?.alphaValue = 1.0
         ballPanel?.level = .floating
         ballPanel?.orderFrontRegardless()
@@ -1053,9 +1315,16 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
             LiquidBallModel.shared.isTucked = true
             snapToNearestScreenEdge()
         }
+        if !wasVisible {
+            animateAppearance(curve: appearCurve)
+            playHapticPair(.alignment, .levelChange)
+        }
     }
     
     public func hide() {
+        if LiquidBallModel.shared.isDismissing {
+            return
+        }
         cancelSummonTasks()
         removeSummonObservers()
         snapTimer?.invalidate()
@@ -1067,16 +1336,17 @@ public final class FloatingBallController: NSObject, NSWindowDelegate {
         sawProcessingSinceSummon = false
         dockAnchor = nil
         LiquidBallModel.shared.isSummoned = false
-        ballPanel?.orderOut(nil)
-        ballPanel?.alphaValue = 1.0
+        LiquidBallModel.shared.isHovered = false
+        LiquidBallModel.shared.isDropTargeted = false
+        dismissWithPop(destroyPanel: false)
     }
     
     public var isBallVisible: Bool {
-        ballPanel?.isVisible ?? false
+        ballPanel?.isVisible == true && !LiquidBallModel.shared.isDismissing
     }
     
     public func toggle() {
-        if let panel = ballPanel, panel.isVisible {
+        if isBallVisible {
             hide()
         } else {
             show()

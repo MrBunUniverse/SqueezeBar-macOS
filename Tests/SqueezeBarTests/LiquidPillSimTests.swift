@@ -2,6 +2,58 @@ import XCTest
 @testable import SqueezeBar
 
 final class LiquidPillSimTests: XCTestCase {
+    func testCompletionOnlyOnceAfterFinalSelectionArrives() {
+        var completions = 0
+        let sim = LiquidPillSim(onArrival: { completions += 1 })
+        sim.update(target: rect(0), drag: nil, at: 0)
+        advance(sim, from: 0, duration: 1)
+        XCTAssertEqual(completions, 0)
+        sim.selectionChanged(animated: true)
+        sim.update(target: rect(300), drag: nil, at: 1)
+        advance(sim, from: 1, duration: 0.1)
+        sim.selectionChanged(animated: true)
+        sim.update(target: rect(150), drag: nil, at: 1.1)
+        XCTAssertEqual(completions, 0)
+        advance(sim, from: 1.1, duration: 0.2)
+        XCTAssertFalse(sim.isSettled)
+        XCTAssertEqual(completions, 1)
+        advance(sim, from: 1.3, duration: 1.8)
+        XCTAssertTrue(sim.isSettled)
+        XCTAssertEqual(completions, 1)
+        advance(sim, from: 3.1, duration: 1)
+        XCTAssertEqual(completions, 1)
+        sim.selectionChanged(animated: false)
+        XCTAssertEqual(completions, 2)
+        sim.selectionChanged(animated: true)
+        sim.update(target: rect(300), drag: nil, at: 4.1)
+        sim.snap(to: rect(300), at: 4.2)
+        advance(sim, from: 4.2, duration: 2)
+        XCTAssertEqual(completions, 2)
+    }
+
+    func testArrivalPrecedesSettle() {
+        for destination: CGFloat in [100, 300, -100, -300] {
+            var elapsed = 0.0
+            var arrivals: [Double] = []
+            let sim = LiquidPillSim(onArrival: { arrivals.append(elapsed) })
+            sim.update(target: rect(0), drag: nil, at: 0)
+            sim.selectionChanged(animated: true)
+            sim.update(target: rect(destination), drag: nil, at: 0)
+            for frame in 1...240 {
+                elapsed = Double(frame) / 120
+                sim.advance(to: elapsed)
+                if sim.isSettled { break }
+            }
+            XCTAssertTrue(sim.isSettled)
+            XCTAssertEqual(arrivals.count, 1)
+            guard let arrival = arrivals.first else { continue }
+            XCTAssertGreaterThanOrEqual(arrival, 0.15)
+            XCTAssertLessThanOrEqual(arrival, 0.3)
+            XCTAssertGreaterThan(elapsed - arrival, 0.3)
+            print("Liquid pill 0→\(destination) pt: arrival=\(arrival)s, settle=\(elapsed)s")
+        }
+    }
+
     private func rect(_ x: CGFloat, width: CGFloat = 96) -> CGRect {
         CGRect(x: x, y: 0, width: width, height: 28)
     }

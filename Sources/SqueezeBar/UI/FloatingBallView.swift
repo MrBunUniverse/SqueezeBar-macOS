@@ -5,11 +5,10 @@ import UniformTypeIdentifiers
 public struct FloatingBallView: View {
     @ObservedObject private var state = AppState.shared
     @ObservedObject private var jobs = AppState.shared.jobs
-    @ObservedObject private var liquidModel = LiquidBallModel.shared
+    @ObservedObject private var liquidModel: LiquidBallModel
     
     @State private var isHovered: Bool = false
     @State private var isDropTargeted: Bool = false
-    @State private var burstProgress: CGFloat = 0
     
     @Environment(\.displayScale) private var displayScale
 
@@ -19,7 +18,10 @@ public struct FloatingBallView: View {
     private var rimLineWidth: CGFloat { displayScale < 2 ? 1.5 : 0.9 }
     private var rimInset: CGFloat { displayScale < 2 ? rimLineWidth / 2 : 0 }
 
-    public init() {}
+    @MainActor
+    public init(model: LiquidBallModel? = nil) {
+        self.liquidModel = model ?? .shared
+    }
     
     private var isTuckedState: Bool {
         liquidModel.isTucked && !isHovered && !isDropTargeted && !jobs.isProcessing && !liquidModel.isMoving && !liquidModel.isSummoned
@@ -108,15 +110,16 @@ public struct FloatingBallView: View {
                 }
 
             if liquidModel.isBurst {
-                // Centred on where the orb was drawn, in its outline and at its size.
-                PopBurst(progress: burstProgress, shape: orbShape, scaleX: targetScaleX, scaleY: targetScaleY, accent: state.accentColor)
-                    .offset(x: targetXOffset * targetScaleX)
-                    .allowsHitTesting(false)
-                    .onAppear {
-                        withAnimation(.linear(duration: LiquidBallModel.burstDuration)) {
-                            burstProgress = 1
-                        }
-                    }
+                // Centred on where the orb was drawn, in its outline and at its swelled size.
+                PopBurst(
+                    progress: liquidModel.burstProgress,
+                    shape: orbShape,
+                    scaleX: targetScaleX * liquidModel.burstBaseScale,
+                    scaleY: targetScaleY * liquidModel.burstBaseScale,
+                    accent: state.accentColor
+                )
+                .offset(x: targetXOffset * targetScaleX)
+                .allowsHitTesting(false)
             }
         }
         .frame(width: FloatingBallController.panelSize, height: FloatingBallController.panelSize)
@@ -153,14 +156,16 @@ public struct FloatingBallView: View {
                 .scaleEffect(x: isTuckedState ? 0.84 : 1, y: isTuckedState ? 0.90 : 1)
         }
         .frame(width: FloatingBallController.orbSize, height: FloatingBallController.orbSize)
+        .scaleEffect(max(0.001, liquidModel.appearanceScale))
         .offset(x: targetXOffset)
         .scaleEffect(x: targetScaleX, y: targetScaleY)
         .rotationEffect(.degrees(liquidModel.rotationAngle))
-        .opacity(liquidModel.isBurst ? 0 : (isTuckedState ? 0.90 : 1.0))
+        .opacity(isTuckedState ? 0.90 : 1.0)
         .animation(currentRevealSpring, value: isTuckedState)
         .animation(currentRevealSpring, value: isHovered)
         .animation(currentRevealSpring, value: isDropTargeted)
         .animation(currentRevealSpring, value: jobs.isProcessing)
+        .opacity(liquidModel.appearanceOpacity)
     }
     
     // Clear bubble-like glass without blur: whatever is behind the ball stays sharp.
@@ -321,24 +326,19 @@ public struct FloatingBallView: View {
     }
 }
 
-// The quit pop: the bubble's outline snaps outward while droplets scatter and fade.
+// The dismiss and quit pop: the bubble's outline snaps outward while droplets scatter and fade.
 // `progress` runs 0...1 at a constant rate; each part applies its own easing to it.
-struct PopBurst: View, Animatable {
+struct PopBurst: View {
     var progress: CGFloat
     let shape: DockedBallShape
     let scaleX: CGFloat
     let scaleY: CGFloat
     let accent: Color
 
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
     // Fixed layout so every pop looks the same: angle in degrees, droplet diameter, travel distance.
     private static let droplets: [(angle: Double, size: CGFloat, travel: CGFloat)] = [
-        (8, 5.5, 24), (49, 3.5, 18), (86, 6, 26), (128, 4, 20), (171, 5, 23),
-        (212, 3.5, 19), (253, 6, 25), (297, 4, 21), (334, 5, 22)
+        (8, 4.5, 11.5), (49, 3.0, 9.0), (86, 5.0, 12.5), (128, 3.5, 10.0), (171, 4.5, 11.5),
+        (212, 3.0, 9.0), (253, 5.0, 12.5), (297, 3.5, 10.0), (334, 4.5, 11.0)
     ]
 
     var body: some View {
@@ -351,7 +351,7 @@ struct PopBurst: View, Animatable {
             shape
                 .stroke(.white.opacity(0.75 * (1 - progress)), lineWidth: 1.4 - progress)
                 .frame(width: radius * 2, height: radius * 2)
-                .scaleEffect(x: scaleX * (1 + 0.32 * flight), y: scaleY * (1 + 0.32 * flight))
+                .scaleEffect(x: scaleX * (1 + 0.24 * flight), y: scaleY * (1 + 0.24 * flight))
 
             ForEach(Self.droplets.indices, id: \.self) { index in
                 let droplet = Self.droplets[index]

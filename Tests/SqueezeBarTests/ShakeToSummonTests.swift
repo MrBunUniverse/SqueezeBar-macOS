@@ -141,4 +141,80 @@ final class ShakeToSummonTests: XCTestCase {
         XCTAssertEqual(long.0, clamped.0)
         XCTAssertEqual(long.1, clamped.1)
     }
+
+    func testGrowInCurveOvershootsBoundedAndSettlesWithinHalfSecond() {
+        let curve = BallAppearanceCurve.growInDefault
+        XCTAssertGreaterThanOrEqual(curve.duration, 0.40)
+        XCTAssertLessThanOrEqual(curve.duration, 0.50)
+
+        let start = curve.sample(at: 0)
+        XCTAssertGreaterThanOrEqual(start.scale, 0.2)
+        XCTAssertLessThanOrEqual(start.scale, 0.4)
+        XCTAssertEqual(start.opacity, 0.0, accuracy: 0.001)
+        XCTAssertFalse(start.isBurst)
+        XCTAssertFalse(start.isSettled)
+
+        var maxScale: CGFloat = 0
+        for step in 0...100 {
+            let t = curve.duration * Double(step) / 100.0
+            let s = curve.sample(at: t)
+            maxScale = max(maxScale, s.scale)
+            XCTAssertFalse(s.isBurst)
+        }
+        XCTAssertGreaterThan(maxScale, 1.01)
+        XCTAssertLessThanOrEqual(maxScale, 1.08)
+
+        let end = curve.sample(at: curve.duration)
+        XCTAssertTrue(end.isSettled)
+        XCTAssertEqual(end.scale, 1.0, accuracy: 0.0001)
+        XCTAssertEqual(end.opacity, 1.0, accuracy: 0.0001)
+    }
+
+    func testPopOutCurveSwellsThenShrinksToZeroWithBurst() {
+        let curve = BallAppearanceCurve.popOutDefault
+        XCTAssertGreaterThanOrEqual(curve.duration, 0.20)
+        XCTAssertLessThanOrEqual(curve.duration, 0.30)
+
+        let start = curve.sample(at: 0)
+        XCTAssertEqual(start.scale, 1.0, accuracy: 0.001)
+        XCTAssertEqual(start.opacity, 1.0, accuracy: 0.001)
+        XCTAssertFalse(start.isBurst)
+
+        let swellPeak = curve.sample(at: 0.079)
+        XCTAssertGreaterThanOrEqual(swellPeak.scale, 1.12)
+        XCTAssertLessThanOrEqual(swellPeak.scale, 1.15)
+        XCTAssertEqual(swellPeak.opacity, 1.0, accuracy: 0.001)
+        XCTAssertFalse(swellPeak.isBurst)
+
+        let midShrink = curve.sample(at: 0.16)
+        XCTAssertTrue(midShrink.isBurst)
+        XCTAssertGreaterThan(midShrink.burstProgress, 0.0)
+        XCTAssertLessThan(midShrink.burstProgress, 1.0)
+        XCTAssertLessThan(midShrink.scale, 1.0)
+
+        let end = curve.sample(at: curve.duration)
+        XCTAssertTrue(end.isSettled)
+        XCTAssertTrue(end.isBurst)
+        XCTAssertEqual(end.scale, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(end.opacity, 0.0, accuracy: 0.0001)
+        XCTAssertEqual(end.burstProgress, 1.0, accuracy: 0.0001)
+    }
+
+    func testReduceMotionAppearanceCurvesFadeWithoutScaleOrBurst() {
+        let fadeIn = BallAppearanceCurve.reduceMotionFadeInDefault
+        let fadeOut = BallAppearanceCurve.reduceMotionFadeOutDefault
+        for step in 0...20 {
+            let sIn = fadeIn.sample(at: fadeIn.duration * Double(step) / 20.0)
+            XCTAssertEqual(sIn.scale, 1.0, accuracy: 0.0001)
+            XCTAssertFalse(sIn.isBurst)
+
+            let sOut = fadeOut.sample(at: fadeOut.duration * Double(step) / 20.0)
+            XCTAssertEqual(sOut.scale, 1.0, accuracy: 0.0001)
+            XCTAssertFalse(sOut.isBurst)
+        }
+        XCTAssertEqual(fadeIn.sample(at: 0).opacity, 0.0, accuracy: 0.001)
+        XCTAssertEqual(fadeIn.sample(at: fadeIn.duration).opacity, 1.0, accuracy: 0.001)
+        XCTAssertEqual(fadeOut.sample(at: 0).opacity, 1.0, accuracy: 0.001)
+        XCTAssertEqual(fadeOut.sample(at: fadeOut.duration).opacity, 0.0, accuracy: 0.001)
+    }
 }

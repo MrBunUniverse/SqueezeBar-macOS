@@ -26,9 +26,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Show floating desktop drop basket if enabled
         if state.floatingBallEnabled {
-            if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-                LiquidBallModel.shared.inflateIn()
-            }
             FloatingBallController.shared.show()
         }
         FloatingBallController.shared.updateDragMonitor()
@@ -95,7 +92,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         isAwaitingTerminateReply = true
         Task { @MainActor in
             if popsBall {
-                await LiquidBallModel.shared.playPop()
+                await FloatingBallController.shared.playQuitPop()
             }
             await MediaCompressionEngine.shared.waitUntilIdle()
             self.replyToTerminate()

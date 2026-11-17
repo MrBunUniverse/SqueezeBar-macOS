@@ -152,7 +152,7 @@ public struct QueueItemSettingsSheet: View {
         .frame(width: 320, height: 380)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color(white: 0.12).opacity(0.98))
+                .surfaceFill(Color(white: 0.12).opacity(0.98))
         )
         .font(.system(.body, design: .rounded))
     }

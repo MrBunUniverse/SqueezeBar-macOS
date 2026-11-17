@@ -65,6 +65,10 @@ public final class FloatingDropWindowController: NSObject, NSWindowDelegate {
             panel.delegate = self
             
             let hostingView = NSHostingView(rootView: HostedPopoverRoot(isDetachedWindow: true, live: false))
+            hostingView.wantsLayer = true
+            hostingView.layer?.cornerRadius = 24
+            hostingView.layer?.cornerCurve = .continuous
+            hostingView.layer?.masksToBounds = true
             panel.contentView = hostingView
             self.hostingView = hostingView
             panel.center()

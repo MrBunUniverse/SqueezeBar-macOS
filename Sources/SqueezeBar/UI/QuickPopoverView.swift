@@ -28,6 +28,41 @@ private func loadDroppedFileURLs(from providers: [NSItemProvider], completion: @
     }
 }
 
+enum SurfaceOpacity {
+    static let minimum = 0.45
+
+    static func value(for transparency: Double) -> Double {
+        1 - transparency * (1 - minimum)
+    }
+}
+
+private struct SurfaceOpacityKey: EnvironmentKey {
+    static let defaultValue = 1.0
+}
+
+extension EnvironmentValues {
+    var surfaceOpacity: Double {
+        get { self[SurfaceOpacityKey.self] }
+        set { self[SurfaceOpacityKey.self] = newValue }
+    }
+}
+
+private struct SurfaceFill<S: Shape, Style: ShapeStyle>: View {
+    @Environment(\.surfaceOpacity) private var opacity
+    let shape: S
+    let style: Style
+
+    var body: some View {
+        shape.fill(style).opacity(opacity)
+    }
+}
+
+extension Shape {
+    func surfaceFill<Style: ShapeStyle>(_ style: Style) -> some View {
+        SurfaceFill(shape: self, style: style)
+    }
+}
+
 private extension Color {
     static func surfaceWhite(_ opacity: Double, for scheme: ColorScheme) -> Color {
         Color.white.opacity(scheme == .dark ? opacity * 0.68 : opacity)
@@ -42,31 +77,109 @@ private struct DarkControlSurface<S: InsettableShape>: ViewModifier {
     var dash: [CGFloat] = []
     var highlighted = false
     var borderless = false
+    var behindContent = false
 
     func body(content: Content) -> some View {
         content
             .overlay {
-                if colorScheme == .dark && enabled {
-                    shape.fill(Color(white: (isHovered || highlighted) ? 0.14 : 0.10))
-                        .overlay {
-                            if !borderless {
-                                shape.strokeBorder(
-                                    LinearGradient(colors: [.white.opacity(0.05), .white.opacity(0.02)], startPoint: .top, endPoint: .bottom),
-                                    style: StrokeStyle(lineWidth: 0.5, dash: dash)
-                                )
-                            }
-                        }
-                        .shadow(color: .black.opacity(0.20), radius: 3.5, y: 1)
-                        .allowsHitTesting(false)
-                }
+                if !behindContent { surface }
+            }
+            .background {
+                if behindContent { surface }
             }
             .onHover { isHovered = $0 }
+    }
+
+    @ViewBuilder private var surface: some View {
+        if colorScheme == .dark && enabled {
+            shape.surfaceFill(Color(white: (isHovered || highlighted) ? 0.14 : 0.10))
+                .overlay {
+                    if !borderless {
+                        shape.strokeBorder(
+                            LinearGradient(colors: [.white.opacity(0.05), .white.opacity(0.02)], startPoint: .top, endPoint: .bottom),
+                            style: StrokeStyle(lineWidth: 0.5, dash: dash)
+                        )
+                    }
+                }
+                .shadow(color: .black.opacity(0.20), radius: 3.5, y: 1)
+                .allowsHitTesting(false)
+        }
     }
 }
 
 private extension View {
-    func darkControlSurface<S: InsettableShape>(_ shape: S, enabled: Bool = true, dash: [CGFloat] = [], highlighted: Bool = false, borderless: Bool = false) -> some View {
-        modifier(DarkControlSurface(shape: shape, enabled: enabled, dash: dash, highlighted: highlighted, borderless: borderless))
+    func darkControlSurface<S: InsettableShape>(_ shape: S, enabled: Bool = true, dash: [CGFloat] = [], highlighted: Bool = false, borderless: Bool = false, behindContent: Bool = false) -> some View {
+        modifier(DarkControlSurface(shape: shape, enabled: enabled, dash: dash, highlighted: highlighted, borderless: borderless, behindContent: behindContent))
+    }
+}
+
+private struct GlassPrismRim: View {
+    private static let cornerRadius: CGFloat = 24
+    private static let channelOffset: CGFloat = 0.65
+    private static let innerInset: CGFloat = 1.1
+    private static let lineWidth: CGFloat = 0.9
+    private static let opacity: Double = 0.38
+    private static let lightModeScale: Double = 0.4
+    private static let cornerReach: CGFloat = 64
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
+        let spectrum = AngularGradient(
+            colors: [.cyan, .blue, .purple, .red, .orange, .yellow, .cyan],
+            center: .center, startAngle: .degrees(0), endAngle: .degrees(360)
+        )
+        ZStack {
+            shape.strokeBorder(spectrum, lineWidth: Self.lineWidth)
+                .offset(x: -Self.channelOffset, y: -Self.channelOffset)
+            shape.inset(by: Self.innerInset)
+                .strokeBorder(spectrum, lineWidth: Self.lineWidth)
+                .rotationEffect(.degrees(180))
+                .offset(x: Self.channelOffset, y: Self.channelOffset)
+        }
+        .mask {
+            ZStack {
+                LinearGradient(colors: [.white.opacity(0.45), .clear], startPoint: .top, endPoint: .center)
+                ForEach(0..<4) { corner in
+                    RadialGradient(
+                        colors: [.white.opacity(corner < 2 ? 1 : 0.35), .clear],
+                        center: UnitPoint(x: corner % 2 == 0 ? 0 : 1, y: corner < 2 ? 0 : 1),
+                        startRadius: 0, endRadius: Self.cornerReach
+                    )
+                }
+            }
+        }
+        .opacity(Self.opacity * (colorScheme == .dark ? 1 : Self.lightModeScale))
+        .blendMode(colorScheme == .dark ? .plusLighter : .multiply)
+        .clipShape(shape)
+        .allowsHitTesting(false)
+    }
+}
+
+struct DetachedGlassRim: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 24)
+        ZStack {
+            GlassPrismRim()
+            if colorScheme == .dark {
+                shape.strokeBorder(Color.white.opacity(0.10), lineWidth: 4)
+                    .blur(radius: 3)
+                    .mask(LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .center))
+                    .clipShape(shape)
+            }
+            shape.strokeBorder(
+                LinearGradient(
+                    colors: [.white.opacity(colorScheme == .dark ? 0.35 : 0.18),
+                             .white.opacity(colorScheme == .dark ? 0.05 : 0.025)],
+                    startPoint: .top, endPoint: .bottom
+                ),
+                lineWidth: 1
+            )
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -79,9 +192,6 @@ public struct QuickPopoverView: View {
     /// A hidden window drops its SwiftUI tree (HostedPopoverRoot), so the chosen tab is kept here for the reopen.
     private static var lastTab: PopoverTab = .activity
     @State private var selectedTab: PopoverTab = QuickPopoverView.lastTab
-    @State private var contentTab: PopoverTab = QuickPopoverView.lastTab
-    @State private var tabContentWorkItem: DispatchWorkItem?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var isWindowDropTargeted: Bool = false
     @State private var activeFormatCategory: MediaFormatCategory = .images
@@ -144,16 +254,16 @@ public struct QuickPopoverView: View {
         .frame(minWidth: state.uiScale.baseWidth - 20, maxWidth: .infinity, minHeight: state.uiScale.baseHeight - 40, maxHeight: .infinity)
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0)
+                RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0)
                     .fill(Color(nsColor: .windowBackgroundColor).opacity(1 - state.appTransparency))
                     .allowsHitTesting(false)
 
-                RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0)
+                RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0)
                     .fill(Color.black.opacity(0.35 * state.appTransparency))
                     .allowsHitTesting(false)
 
                 if state.appGlassFrost > 0 {
-                    RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0)
+                    RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0)
                         .fill(.ultraThinMaterial)
                         .opacity(state.appGlassFrost)
                         .allowsHitTesting(false)
@@ -161,24 +271,28 @@ public struct QuickPopoverView: View {
 
                 if #available(macOS 26.0, *) {
                     Color.clear
-                        .glassEffect(.clear.tint(Color.black.opacity(0.3)), in: RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0))
+                        .glassEffect(.clear.tint(Color.black.opacity(0.12)), in: RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0))
                         .allowsHitTesting(false)
                 }
 
                 if colorScheme == .dark {
-                    RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0)
+                    RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0)
                         .fill(Color.black.opacity(0.32 * (1 - state.appTransparency * 0.4)))
                         .allowsHitTesting(false)
                 }
 
+                if isDetachedWindow {
+                    DetachedGlassRim()
+                }
+
                 if isWindowDropTargeted {
-                    RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0)
+                    RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0)
                         .strokeBorder(state.accentColor, lineWidth: 2.5)
                         .background(state.accentColor.opacity(0.10))
                 }
             }
         )
-        .clipShape(RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0))
+        .clipShape(RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0))
         .ignoresSafeArea()
         .onDrop(of: [.fileURL], isTargeted: $isWindowDropTargeted) { providers in
             extractAndProcess(providers: providers)
@@ -224,6 +338,7 @@ public struct QuickPopoverView: View {
             .allowsHitTesting(false)
         )
         .font(.system(.body, design: .rounded))
+        .environment(\.surfaceOpacity, SurfaceOpacity.value(for: state.appTransparency))
     }
     
     private var innerMainContent: some View {
@@ -240,7 +355,7 @@ public struct QuickPopoverView: View {
             // Tab Content
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 14) {
-                    if contentTab == .activity {
+                    if selectedTab == .activity {
                         statsSummaryCard
                         
                         // Active Format Configuration Deck (Sliders, Quality, Resolution, Target Size, Codecs)
@@ -259,6 +374,7 @@ public struct QuickPopoverView: View {
                         settingsSection
                     }
                 }
+                .animation(.easeInOut(duration: 0.15), value: selectedTab)
                 .padding(.horizontal, 18)
                 .padding(.top, 8)
                 .padding(.bottom, 18)
@@ -369,7 +485,7 @@ public struct QuickPopoverView: View {
         .padding(2)
         .background(
             Capsule()
-                .fill(Color.black.opacity(colorScheme == .dark ? 0.34 : 0.24))
+                .surfaceFill(Color.black.opacity(colorScheme == .dark ? 0.34 : 0.24))
                 .overlay(Capsule().strokeBorder(Color.surfaceWhite(0.08, for: colorScheme), lineWidth: 0.5))
         )
         .clipShape(Capsule())
@@ -379,26 +495,11 @@ public struct QuickPopoverView: View {
     }
 
     private func selectTab(_ tab: PopoverTab) {
-        tabContentWorkItem?.cancel()
         selectedTab = tab
         Self.lastTab = tab
-        let applyContent = {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                contentTab = tab
-            }
-            if tab == .settings {
-                FloatingDropWindowController.shared.ensureMinimumDimensions(width: 490, height: 660)
-                StatusBarController.sharedInstance?.ensurePopoverDimensions(width: 490, height: 660)
-            }
-        }
-        if reduceMotion {
-            tabContentWorkItem = nil
-            applyContent()
-        } else {
-            // Let the liquid finish its stretch and crossing before building/resizing the Settings body.
-            let work = DispatchWorkItem(block: applyContent)
-            tabContentWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+        if tab == .settings {
+            FloatingDropWindowController.shared.ensureMinimumDimensions(width: 490, height: 660)
+            StatusBarController.sharedInstance?.ensurePopoverDimensions(width: 490, height: 660)
         }
     }
 
@@ -681,7 +782,7 @@ public struct QuickPopoverView: View {
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2.5)
-                            .background(Capsule().fill(Color.surfaceWhite(0.06, for: colorScheme)))
+                            .background(Capsule().surfaceFill(Color.surfaceWhite(0.06, for: colorScheme)))
                     }
                 }
                 .padding(9)
@@ -690,7 +791,7 @@ public struct QuickPopoverView: View {
                         ZStack(alignment: .leading) {
                             // Base Glass Card
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(
+                                .surfaceFill(
                                     LinearGradient(
                                         colors: [Color.surfaceWhite(0.045, for: colorScheme), Color.surfaceWhite(0.015, for: colorScheme)],
                                         startPoint: .topLeading,
@@ -765,7 +866,7 @@ public struct QuickPopoverView: View {
             .frame(maxWidth: .infinity, minHeight: 40)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(isDropTargeted ? state.accentColor.opacity(0.10) : Color.surfaceWhite(0.03, for: colorScheme))
+                    .surfaceFill(isDropTargeted ? state.accentColor.opacity(0.10) : Color.surfaceWhite(0.03, for: colorScheme))
                     .darkControlSurface(RoundedRectangle(cornerRadius: 10), enabled: !isDropTargeted, dash: [4])
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
@@ -849,7 +950,7 @@ public struct QuickPopoverView: View {
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2.5)
                             .background(
-                                Capsule().fill(isEditMode ? state.accentColor : Color.surfaceWhite(0.06, for: colorScheme))
+                                Capsule().surfaceFill(isEditMode ? state.accentColor : Color.surfaceWhite(0.06, for: colorScheme))
                                     .darkControlSurface(Capsule(), enabled: !isEditMode)
                             )
                     }
@@ -984,7 +1085,7 @@ public struct QuickPopoverView: View {
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.surfaceWhite(0.08, for: colorScheme)))
+                    .background(Capsule().surfaceFill(Color.surfaceWhite(0.08, for: colorScheme)))
                 }
                 .menuStyle(.borderlessButton)
                 
@@ -1010,7 +1111,7 @@ public struct QuickPopoverView: View {
         .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.surfaceWhite(0.04, for: colorScheme))
+                .surfaceFill(Color.surfaceWhite(0.04, for: colorScheme))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.surfaceWhite(0.08, for: colorScheme), lineWidth: 0.5))
         )
     }
@@ -1095,7 +1196,7 @@ public struct QuickPopoverView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.04)))
+                .background(RoundedRectangle(cornerRadius: 6).surfaceFill(Color.white.opacity(0.04)))
                 .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(state.accentColor.opacity(0.3), lineWidth: 0.5))
             }
             
@@ -1108,7 +1209,7 @@ public struct QuickPopoverView: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Capsule().fill(Color.white.opacity(0.06)))
+                .background(Capsule().surfaceFill(Color.white.opacity(0.06)))
                 
                 Button("Optimized_{index}") {
                     renamePattern = "Optimized_{index}"
@@ -1117,7 +1218,7 @@ public struct QuickPopoverView: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Capsule().fill(Color.white.opacity(0.06)))
+                .background(Capsule().surfaceFill(Color.white.opacity(0.06)))
             }
             
             HStack(spacing: 10) {
@@ -1195,7 +1296,7 @@ public struct QuickPopoverView: View {
                 .padding(14)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(isDropTargeted ? state.accentColor.opacity(0.10) : Color.surfaceWhite(0.02, for: colorScheme))
+                        .surfaceFill(isDropTargeted ? state.accentColor.opacity(0.10) : Color.surfaceWhite(0.02, for: colorScheme))
                         .darkControlSurface(RoundedRectangle(cornerRadius: 12), enabled: !isDropTargeted, dash: [4])
                         .overlay(
                             RoundedRectangle(cornerRadius: 12)
@@ -1263,7 +1364,7 @@ public struct QuickPopoverView: View {
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(isQueueDropTargeted ? state.accentColor.opacity(0.12) : Color.surfaceWhite(0.04, for: colorScheme))
+                        .surfaceFill(isQueueDropTargeted ? state.accentColor.opacity(0.12) : Color.surfaceWhite(0.04, for: colorScheme))
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
                                 .strokeBorder(isQueueDropTargeted ? state.accentColor.opacity(0.8) : Color.clear, lineWidth: 1.5)
@@ -1354,7 +1455,7 @@ public struct QuickPopoverView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.surfaceWhite(0.025, for: colorScheme))
+                .surfaceFill(Color.surfaceWhite(0.025, for: colorScheme))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.surfaceWhite(0.08, for: colorScheme), lineWidth: 0.5))
         )
     }
@@ -1423,7 +1524,7 @@ public struct QuickPopoverView: View {
                         .padding(.vertical, 3)
                         .background(
                             Capsule()
-                                .fill(Color.surfaceWhite(0.10, for: colorScheme))
+                                .surfaceFill(Color.surfaceWhite(0.10, for: colorScheme))
                                 .overlay(
                                     Capsule()
                                         .strokeBorder(Color.surfaceWhite(0.18, for: colorScheme), lineWidth: 0.5)
@@ -1448,7 +1549,7 @@ public struct QuickPopoverView: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(colorScheme == .dark ? 0.34 : 0.25))
+                    .surfaceFill(Color.black.opacity(colorScheme == .dark ? 0.34 : 0.25))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(Color.surfaceWhite(0.07, for: colorScheme), lineWidth: 0.5)
@@ -2203,14 +2304,15 @@ public struct QuickPopoverView: View {
                     .font(.system(size: 11, design: .rounded))
             }
             .padding(14)
+            .contentShape(Rectangle())
+            .darkControlSurface(RoundedRectangle(cornerRadius: 10), behindContent: true)
             .background(
                 RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.surfaceWhite(0.035, for: colorScheme))
-                    .darkControlSurface(RoundedRectangle(cornerRadius: 10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(Color.surfaceWhite(0.07, for: colorScheme), lineWidth: 0.5)
-                    )
+                    .surfaceFill(Color.surfaceWhite(0.035, for: colorScheme))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.surfaceWhite(0.07, for: colorScheme), lineWidth: 0.5)
             )
         }
     }
@@ -2233,7 +2335,7 @@ public struct QuickPopoverView: View {
                                 .foregroundColor(.secondary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1)
-                                .background(Capsule().fill(Color.surfaceWhite(0.10, for: colorScheme)))
+                                .background(Capsule().surfaceFill(Color.surfaceWhite(0.10, for: colorScheme)))
                         }
                     }
                     if let detail {
@@ -2452,7 +2554,7 @@ public struct QuickPopoverView: View {
                                 .padding(.vertical, 4)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.surfaceWhite(0.06, for: colorScheme))
+                                        .surfaceFill(Color.surfaceWhite(0.06, for: colorScheme))
                                         .overlay(
                                             RoundedRectangle(cornerRadius: 6)
                                                 .stroke(state.accentColor.opacity(0.4), lineWidth: 0.75)
@@ -2481,7 +2583,7 @@ public struct QuickPopoverView: View {
                                     .padding(.vertical, 3)
                                     .background(
                                         RoundedRectangle(cornerRadius: 6)
-                                            .fill(Color.surfaceWhite(0.06, for: colorScheme))
+                                            .surfaceFill(Color.surfaceWhite(0.06, for: colorScheme))
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 6)
                                                     .stroke(Color.surfaceWhite(0.12, for: colorScheme), lineWidth: 0.5)
@@ -2515,7 +2617,7 @@ public struct QuickPopoverView: View {
                                             .frame(width: 22, height: 22)
                                             .background(
                                                 Circle()
-                                                    .fill(Color.surfaceWhite(0.06, for: colorScheme))
+                                                    .surfaceFill(Color.surfaceWhite(0.06, for: colorScheme))
                                                     .overlay(Circle().stroke(Color.surfaceWhite(0.12, for: colorScheme), lineWidth: 0.5))
                                             )
                                     }
@@ -2848,7 +2950,6 @@ public struct FileThumbnailView: View {
                     )
                     .overlay(
                         Image(systemName: mediaIconName)
-                            .font(.system(size: 16, design: .rounded))
                             .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
                             .foregroundColor(mediaIconColor)
                     )
@@ -2959,26 +3060,6 @@ private final class ThumbnailCache: @unchecked Sendable {
     }
 }
 
-/// Subtle "grow on hover" used by tabs and buttons instead of a highlight. Skipped when Reduce Motion is on.
-private struct HoverGrowModifier: ViewModifier {
-    let scale: CGFloat
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isHovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(isHovering && !reduceMotion ? scale : 1.0)
-            .animation(.spring(response: 0.25, dampingFraction: 0.78), value: isHovering)
-            .onHover { isHovering = $0 }
-    }
-}
-
-private extension View {
-    func hoverGrow(_ scale: CGFloat = 1.04) -> some View {
-        modifier(HoverGrowModifier(scale: scale))
-    }
-}
-
 // MARK: - Liquid Glass Toggle Row
 private struct LiquidGlassToggleRow: View {
     @EnvironmentObject var state: AppState
@@ -3022,7 +3103,7 @@ private struct LiquidGlassToggleRow: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isOn ? state.accentColor.opacity(0.06) : Color.surfaceWhite(0.02, for: colorScheme))
+                    .surfaceFill(isOn ? state.accentColor.opacity(0.06) : Color.surfaceWhite(0.02, for: colorScheme))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
@@ -3113,7 +3194,7 @@ private struct LiveProfileGlowCard<Content: View>: View {
         content()
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(isSelected ? accentColor.opacity(0.12) : Color.surfaceWhite(0.035, for: colorScheme))
+            .background(RoundedRectangle(cornerRadius: 8).surfaceFill(isSelected ? accentColor.opacity(0.12) : Color.surfaceWhite(0.035, for: colorScheme))
                 .darkControlSurface(RoundedRectangle(cornerRadius: 8), enabled: !isSelected))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isSelected ? accentColor.opacity(0.45) : Color.clear, lineWidth: 0.75))
     }
@@ -3316,7 +3397,6 @@ struct LiquidGlassSlider: View {
 
 /// Colours of the liquid selection in one pill row.
 struct LiquidPillStyle {
-    var fill: Color = .white.opacity(0.3)
     var stroke: Color = .white.opacity(0.18)
     var glow: Color = .white.opacity(0.11)
     var volume = true
@@ -3324,7 +3404,7 @@ struct LiquidPillStyle {
     var label: Color = .primary.opacity(0.85)
 
     static let pill = LiquidPillStyle()
-    static let tab = LiquidPillStyle(fill: .white.opacity(0.20), stroke: .white.opacity(0.24), glow: .clear, volume: true, label: .secondary)
+    static let tab = LiquidPillStyle(stroke: .white.opacity(0.24), glow: .clear, volume: true, label: .secondary)
 }
 
 private let liquidPillRowSpace = "liquidPillRow"
@@ -3469,7 +3549,7 @@ private struct InvertedPathShape: Shape {
 /// Spring physics for the liquid: each edge has its own spring, the edge facing the travel direction is
 /// quick and the trailing edge is slower and hangs on briefly, so the blob stretches across the gap and
 /// then contracts into the target with a jelly wobble. Only stepped while something moves.
-final class LiquidPillSim {
+final class LiquidPillSim: ObservableObject {
     private struct Edge {
         var x: CGFloat = 0
         var v: CGFloat = 0
@@ -3503,6 +3583,28 @@ final class LiquidPillSim {
     private var clock: TimeInterval = 0
     private var edgesRestingSince: TimeInterval?
     private(set) var isSettled = true
+    private var completionPending = false
+    private let onArrival: () -> Void
+    var onDetent: () -> Void = {}
+
+    init(onArrival: @escaping () -> Void = {}) {
+        self.onArrival = onArrival
+    }
+
+    func selectionChanged(animated: Bool) {
+        completionPending = true
+        if !animated { completeMove() }
+    }
+
+    func cancelArrival() {
+        completionPending = false
+    }
+
+    private func completeMove() {
+        guard completionPending else { return }
+        completionPending = false
+        onArrival()
+    }
 
     /// Feeds the current goal: the selected option's frame, or the drag position while dragging.
     func update(target: CGRect?, drag: (center: CGFloat, option: CGRect)?, at time: TimeInterval) {
@@ -3532,6 +3634,9 @@ final class LiquidPillSim {
             remaining -= h
             integrate(h, holding: holding)
         }
+        // The fast edge lands before the trailing edge and jelly finish resting.
+        let leadingEdgeArrived = movingRight ? hi.x >= goalHi - 2 : lo.x <= goalLo + 2
+        if !dragging && !holding && leadingEdgeArrived { completeMove() }
         let edgesResting = !dragging && !holding
             && abs(lo.x - goalLo) < 0.25 && abs(hi.x - goalHi) < 0.25
             && abs(lo.v) < 4 && abs(hi.v) < 4
@@ -3547,6 +3652,7 @@ final class LiquidPillSim {
             squash = Edge()
             restWidth = goalHi - goalLo
             isSettled = true
+            completeMove()
         }
     }
 
@@ -3586,6 +3692,7 @@ final class LiquidPillSim {
 
     /// Hidden views resume at the current selection, without replaying an old flight.
     func snap(to target: CGRect?, at time: TimeInterval) {
+        completionPending = false
         dragging = false
         holdUntil = 0
         edgesRestingSince = nil
@@ -3616,7 +3723,9 @@ final class LiquidPillSim {
         }
         let trip = rect.midX - (lo.x + hi.x) / 2
         guard abs(trip) > 2 else {
+            let wasMoving = !isSettled
             move(to: rect, at: time, snap: true)
+            if wasMoving { completeMove() }
             return
         }
         edgesRestingSince = nil
@@ -3699,6 +3808,33 @@ private struct StaticPillRow<Row: View>: View, Equatable {
     }
 }
 
+/// Retains the current detent until the pointer clears the next midpoint by 4 pt.
+func liquidPillDetentIndex(at x: CGFloat, centers: [CGFloat], current: Int) -> Int {
+    guard centers.indices.contains(current) else { return current }
+    var index = current
+    while index + 1 < centers.count, x >= (centers[index] + centers[index + 1]) / 2 + 4 {
+        index += 1
+    }
+    while index > 0, x <= (centers[index - 1] + centers[index]) / 2 - 4 {
+        index -= 1
+    }
+    return index
+}
+
+private final class PillDetentHaptics {
+    private var lastDetent = -Double.infinity
+
+    func detent() {
+        lastDetent = ProcessInfo.processInfo.systemUptime
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
+
+    func arrival() {
+        guard ProcessInfo.processInfo.systemUptime - lastDetent >= 0.08 else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
+}
+
 /// One liquid selection behind a row of `liquidPillOption` views, with drag-to-switch and VoiceOver adjust.
 struct SelectedPillDragGesture<Option: Hashable>: ViewModifier {
     @EnvironmentObject private var state: AppState
@@ -3712,7 +3848,21 @@ struct SelectedPillDragGesture<Option: Hashable>: ViewModifier {
     @State private var frames: [AnyHashable: CGRect] = [:]
     @State private var dragX: CGFloat?
     @State private var dragRejected = false
-    @State private var sim = LiquidPillSim()
+    @State private var dragOption: Option?
+    @StateObject private var sim: LiquidPillSim
+
+    init(options: [Option], selected: Option?, style: LiquidPillStyle = .pill, onSelect: @escaping (Option) -> Void) {
+        self.options = options
+        self.selected = selected
+        self.style = style
+        self.onSelect = onSelect
+        _sim = StateObject(wrappedValue: {
+            let haptics = PillDetentHaptics()
+            let sim = LiquidPillSim(onArrival: { haptics.arrival() })
+            sim.onDetent = { haptics.detent() }
+            return sim
+        }())
+    }
     @State private var isRunning = false
     @State private var windowVisible = false
     @State private var renderToken = PillRowRenderToken()
@@ -3750,12 +3900,16 @@ struct SelectedPillDragGesture<Option: Hashable>: ViewModifier {
                             isRunning = windowVisible && !sim.isSettled
                         }
                 }
-                .background(WindowVisibilityReader(isVisible: $windowVisible))
-                .onChange(of: windowVisible) { _, _ in
-                    sim.snap(to: targetFrame, at: Date().timeIntervalSinceReferenceDate)
-                    isRunning = false
-                }
             }
+        }
+        .background(WindowVisibilityReader(isVisible: $windowVisible))
+        .onChange(of: windowVisible) { _, _ in
+            sim.snap(to: targetFrame, at: Date().timeIntervalSinceReferenceDate)
+            isRunning = false
+        }
+        .onChange(of: selected) { _, _ in
+            guard windowVisible, targetFrame != nil else { return }
+            sim.selectionChanged(animated: !reduceMotion)
         }
         .onPreferenceChange(LiquidPillFramesKey.self) { newFrames in
             if frames != newFrames {
@@ -3831,14 +3985,28 @@ struct SelectedPillDragGesture<Option: Hashable>: ViewModifier {
                     dragRejected = true
                     return
                 }
+                let ordered = options.compactMap { option -> (Option, CGFloat)? in
+                    frames[AnyHashable(option)].map { (option, $0.midX) }
+                }.sorted { $0.1 < $1.1 }
+                if dragX == nil {
+                    sim.cancelArrival()
+                    dragOption = nearestOption(to: value.startLocation.x)
+                }
+                if let current = ordered.firstIndex(where: { $0.0 == dragOption }) {
+                    let next = liquidPillDetentIndex(at: value.location.x, centers: ordered.map { $0.1 }, current: current)
+                    // A fast event can cross several boundaries.
+                    for _ in 0..<abs(next - current) { sim.onDetent() }
+                    dragOption = ordered[next].0
+                }
                 dragX = value.location.x
             }
             .onEnded { value in
                 defer {
                     dragX = nil
                     dragRejected = false
+                    dragOption = nil
                 }
-                guard dragX != nil, isEnabled else { return }
+                guard dragX != nil, isEnabled, !dragRejected else { return }
                 let x = value.location.x + (value.predictedEndLocation.x - value.location.x) * 0.15
                 if let option = nearestOption(to: x), option != selected {
                     onSelect(option)
@@ -3878,7 +4046,7 @@ struct UniversalPillGliderItem<T: Hashable>: View {
             .background {
                 if !isRevealCopy {
                     Capsule()
-                        .fill(LinearGradient(colors: [Color.surfaceWhite(0.08, for: colorScheme), Color.surfaceWhite(0.03, for: colorScheme)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .surfaceFill(LinearGradient(colors: [Color.surfaceWhite(0.08, for: colorScheme), Color.surfaceWhite(0.03, for: colorScheme)], startPoint: .topLeading, endPoint: .bottomTrailing))
                         .darkControlSurface(Capsule(), enabled: !isSelected)
                         .overlay(
                             Capsule().strokeBorder(
@@ -3965,7 +4133,7 @@ private struct FolderSectionItemView: View {
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .padding(.horizontal, 4)
                     .padding(.vertical, 1)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.surfaceWhite(0.12, for: colorScheme)))
+                    .background(RoundedRectangle(cornerRadius: 4).surfaceFill(Color.surfaceWhite(0.12, for: colorScheme)))
                     .frame(maxWidth: 140)
                 } else {
                     Text(folder.name)
@@ -4042,7 +4210,7 @@ private struct FolderSectionItemView: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isFolderDropTargeted ? Color.green.opacity(0.12) : Color.surfaceWhite(0.03, for: colorScheme))
+                    .surfaceFill(isFolderDropTargeted ? Color.green.opacity(0.12) : Color.surfaceWhite(0.03, for: colorScheme))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
                             .strokeBorder(isFolderDropTargeted ? Color.green.opacity(0.6) : Color.clear, lineWidth: 1)
@@ -4065,7 +4233,7 @@ private struct FolderSectionItemView: View {
                     .padding(.vertical, 12)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(isFolderDropTargeted ? Color.green.opacity(0.08) : Color.surfaceWhite(0.015, for: colorScheme))
+                            .surfaceFill(isFolderDropTargeted ? Color.green.opacity(0.08) : Color.surfaceWhite(0.015, for: colorScheme))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
                                     .strokeBorder(
@@ -4316,7 +4484,7 @@ private struct QuickPopoverHistoryRowItem: View {
                     .fill(Color.clear)
                     .darkControlSurface(RoundedRectangle(cornerRadius: 8), highlighted: isHovered)
             } else {
-                (isSelected ? state.accentColor.opacity(0.08) : Color.surfaceWhite(isHovered ? 0.025 : 0.008, for: colorScheme))
+                Rectangle().surfaceFill(isSelected ? state.accentColor.opacity(0.08) : Color.surfaceWhite(isHovered ? 0.025 : 0.008, for: colorScheme))
             }
         }
         .overlay(alignment: .bottom) {
@@ -4345,7 +4513,7 @@ private struct StagedQueueRowItem: View {
         HStack(spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.surfaceWhite(0.06, for: colorScheme))
+                    .surfaceFill(Color.surfaceWhite(0.06, for: colorScheme))
                     .frame(width: 28, height: 28)
                 
                 Image(systemName: iconForMediaType(item.mediaType))
@@ -4390,7 +4558,7 @@ private struct StagedQueueRowItem: View {
                 .foregroundColor(.white)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
-                .background(Capsule().fill(Color.surfaceWhite(0.08, for: colorScheme)))
+                .background(Capsule().surfaceFill(Color.surfaceWhite(0.08, for: colorScheme)))
                 .overlay(Capsule().strokeBorder(Color.surfaceWhite(0.12, for: colorScheme), lineWidth: 0.5))
             }
             .buttonStyle(.plain)
@@ -4417,7 +4585,7 @@ private struct StagedQueueRowItem: View {
             ZStack {
                 NonDraggableArea()
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.surfaceWhite(isHovered ? 0.05 : 0.03, for: colorScheme))
+                    .surfaceFill(Color.surfaceWhite(isHovered ? 0.05 : 0.03, for: colorScheme))
                     .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.surfaceWhite(0.06, for: colorScheme), lineWidth: 0.5))
             }
         )
