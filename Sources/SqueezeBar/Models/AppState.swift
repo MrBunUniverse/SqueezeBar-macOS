@@ -735,7 +735,7 @@ public final class AppState: ObservableObject {
         let fm = FileManager.default
         
         for i in 0..<recentResults.count {
-            guard ids.contains(recentResults[i].id) else { continue }
+            guard ids.contains(recentResults[i].id), recentResults[i].skipped != true else { continue }
             let originalItem = recentResults[i]
             let ext = originalItem.outputURL.pathExtension
             let directory = originalItem.outputURL.deletingLastPathComponent()
@@ -890,7 +890,8 @@ public final class AppState: ObservableObject {
             jobs.activeJobs[idx].isPaused = false
             jobs.activeJobs[idx].error = error
             if let result = result {
-                jobs.activeJobs[idx].statusText = String(localized: "Saved \(result.formattedSaved) (-\(Int(result.percentSaved))%)")
+                jobs.activeJobs[idx].outcomeCaption = result.skipped == true ? nil : result.outcomeCaption
+                jobs.activeJobs[idx].statusText = result.skipped == true ? result.outcomeCaption! : String(localized: "Saved \(result.formattedSaved) (-\(Int(result.percentSaved))%)")
                 jobs.activeJobs[idx].progress = 1.0
                 recordResult(result)
             } else if let statusOverride {
@@ -1024,7 +1025,7 @@ public final class AppState: ObservableObject {
         } else {
             name = String(localized: "No supported files")
         }
-        recordFailure(fileName: name, message: String(localized: "No supported files"))
+        recordFailure(fileName: name, message: urls.isEmpty ? String(localized: "Couldn’t read that file. Try dragging it from Finder.") : String(localized: "Unsupported file type"))
     }
     
     /// Keeps failed files visible after their job row disappears, and surfaces the error on the DropBall.

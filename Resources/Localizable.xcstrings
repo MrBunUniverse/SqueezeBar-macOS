@@ -252,7 +252,7 @@
     "Allows smart downscaling + bitrate reduction" : {
 
     },
-    "Already optimized" : {
+    "Already optimized — original kept, no new file saved" : {
 
     },
     "Animated GIF" : {
@@ -446,6 +446,9 @@
 
     },
     "Couldn’t access that folder. Please choose another folder." : {
+
+    },
+    "Couldn’t read that file. Try dragging it from Finder." : {
 
     },
     "Create" : {
@@ -1061,6 +1064,9 @@
     "Saved %@ so far" : {
 
     },
+    "Saved to %@" : {
+
+    },
     "Saving" : {
 
     },
@@ -1098,6 +1104,9 @@
 
     },
     "Side by Side" : {
+
+    },
+    "Skipped" : {
 
     },
     "Small" : {
@@ -1197,6 +1206,9 @@
 
     },
     "Unmute" : {
+
+    },
+    "Unsupported file type" : {
 
     },
     "Unsupported media format" : {

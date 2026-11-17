@@ -328,6 +328,20 @@ public struct CompressionResult: Identifiable, Codable, Sendable {
     public let timestamp: Date
     public let originalDimensions: String?
     public let outputDimensions: String?
+    public var skipped: Bool? = nil
+    public var savedFolderName: String? = nil
+
+    public var outcomeCaption: String? {
+        if skipped == true { return String(localized: "Already optimized — original kept, no new file saved") }
+        return savedFolderName.map { String(localized: "Saved to \($0)") }
+    }
+
+    public static func destinationFolderName(source: URL, output: URL, customOutputFolder: String?, exportToSubfolder: Bool) -> String? {
+        guard customOutputFolder?.isEmpty != false, !exportToSubfolder,
+              source.deletingLastPathComponent().standardizedFileURL != output.deletingLastPathComponent().standardizedFileURL else { return nil }
+        return output.deletingLastPathComponent().lastPathComponent
+    }
+
     public var folderId: UUID?
     
     public init(
@@ -392,6 +406,7 @@ public struct CompressionJob: Identifiable, Sendable {
     public var statusText: String
     public var isFinished: Bool
     public var error: String?
+    public var outcomeCaption: String? = nil
     public var isPaused: Bool = false
     
     /// Only long-running streaming encodes can be paused; image and PDF jobs finish too quickly to pause.

@@ -86,7 +86,7 @@ public struct FloatingBallView: View {
                         liquidModel.scheduleAutoTuck(afterSeconds: 1.8)
                     }
                 }
-                .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
+                .onDrop(of: [UTType.item.identifier], isTargeted: $isDropTargeted) { providers in
                     handleDroppedProviders(providers)
                 }
                 .contextMenu {
@@ -293,23 +293,7 @@ public struct FloatingBallView: View {
             FloatingBallController.shared.markDropInitiated()
         }
 
-        var urls: [URL] = []
-        let lock = NSLock()
-        let group = DispatchGroup()
-        
-        for provider in fileProviders {
-            group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-                let url = item as? URL ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
-                guard let url, url.isFileURL else { return }
-                lock.lock()
-                urls.append(url)
-                lock.unlock()
-            }
-        }
-        
-        group.notify(queue: .main) {
+        loadDroppedFileURLs(from: providers) { urls in
             guard !urls.isEmpty else {
                 FloatingBallController.shared.cancelPendingDropAndReturn()
                 return
@@ -322,7 +306,7 @@ public struct FloatingBallView: View {
             }
         }
         
-        return !fileProviders.isEmpty
+        return true
     }
 }
 

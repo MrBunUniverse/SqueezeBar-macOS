@@ -115,7 +115,11 @@ public final class StatusItemDropView: NSView {
     
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = extractFileURLs(from: sender)
-        guard !urls.isEmpty else { return false }
+        guard !urls.isEmpty else {
+            AppState.shared.reportNoSupportedFiles(urls: [])
+            controller?.finishFileDragHover(didDrop: true)
+            return true
+        }
         
         controller?.finishFileDragHover(didDrop: true)
         

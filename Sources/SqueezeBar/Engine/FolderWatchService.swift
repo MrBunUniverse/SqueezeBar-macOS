@@ -146,7 +146,7 @@ public final class FolderWatchService: @unchecked Sendable {
             if !stableURLs.isEmpty, !Task.isCancelled {
                 queue.sync { knownFiles.formUnion(stableNames) }
                 // Don't await: keep polling the rest while this batch compresses.
-                Task { await MediaCompressionEngine.shared.processDroppedURLs(stableURLs) }
+                Task { await MediaCompressionEngine.shared.processDroppedURLs(stableURLs, reportEmpty: false) }
             }
 
             pending = stillPending

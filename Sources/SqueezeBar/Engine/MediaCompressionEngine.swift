@@ -121,12 +121,13 @@ public actor MediaCompressionEngine {
     }
     
     // MARK: - Batch Processing Entry Point
-    public func processDroppedURLs(_ urls: [URL], targetFolderId: UUID? = nil) async {
+    @discardableResult
+    public func processDroppedURLs(_ urls: [URL], targetFolderId: UUID? = nil, reportEmpty: Bool = true) async -> Bool {
         // 1. Gather all individual media files (recursively expanding folders)
         let resolvedFiles = gatherMediaFiles(from: urls)
         guard !resolvedFiles.isEmpty else {
-            await AppState.shared.reportNoSupportedFiles(urls: urls)
-            return
+            if reportEmpty { await AppState.shared.reportNoSupportedFiles(urls: urls) }
+            return false
         }
         
         // 2. Fetch current config from main actor
@@ -143,6 +144,7 @@ public actor MediaCompressionEngine {
         }
         
         await runJobs(jobs, targetFolderId: targetFolderId, droppedURLs: urls)
+        return true
     }
     
     private func registerJob(url: URL, mediaType: MediaType, originalSize: Int64, config: CompressionConfiguration) async -> PendingJob {
@@ -305,7 +307,9 @@ public actor MediaCompressionEngine {
         let duration = Date().timeIntervalSince(startTime)
         if !Self.didSaveBytes(originalSize: originalSize, compressedSize: compressedSize) {
             try? FileManager.default.removeItem(at: destinationURL)
-            await AppState.shared.finishJob(id: jobId, result: nil, error: nil, statusOverride: String(localized: "Already optimized"))
+            var skipped = CompressionResult(originalURL: url, outputURL: url, originalSize: originalSize, compressedSize: originalSize, duration: duration, mediaType: mediaType, folderId: targetFolderId)
+            skipped.skipped = true
+            await AppState.shared.finishJob(id: jobId, result: skipped, error: nil)
             return false
         }
         
@@ -317,7 +321,7 @@ public actor MediaCompressionEngine {
             return false
         }
         
-        let result = CompressionResult(
+        var result = CompressionResult(
             originalURL: url,
             outputURL: destinationURL,
             originalSize: originalSize,
@@ -329,6 +333,7 @@ public actor MediaCompressionEngine {
             folderId: targetFolderId
         )
         
+        result.savedFolderName = CompressionResult.destinationFolderName(source: url, output: destinationURL, customOutputFolder: config.customOutputFolder, exportToSubfolder: config.exportToSubfolder)
         await AppState.shared.finishJob(id: jobId, result: result, error: nil)
         return true
     }

@@ -6,7 +6,7 @@ import ImageIO
 import AVFoundation
 import PDFKit
 
-private func loadDroppedFileURLs(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
+func loadDroppedFileURLs(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
     var urls: [URL] = []
     let lock = NSLock()
     let group = DispatchGroup()
@@ -24,7 +24,10 @@ private func loadDroppedFileURLs(from providers: [NSItemProvider], completion: @
     }
 
     group.notify(queue: .main) {
-        completion(urls)
+        Task { @MainActor in
+            if urls.isEmpty { AppState.shared.reportNoSupportedFiles(urls: []) }
+            completion(urls)
+        }
     }
 }
 
@@ -294,7 +297,7 @@ public struct QuickPopoverView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0))
         .ignoresSafeArea()
-        .onDrop(of: [.fileURL], isTargeted: $isWindowDropTargeted) { providers in
+        .onDrop(of: [.item], isTargeted: $isWindowDropTargeted) { providers in
             extractAndProcess(providers: providers)
         }
         .overlay(alignment: .top) {
@@ -721,6 +724,9 @@ public struct QuickPopoverView: View {
                             .foregroundColor(.primary)
                             .lineLimit(1)
                         
+                        if let caption = job.outcomeCaption {
+                            Text(caption).font(.system(size: 11)).foregroundColor(.secondary)
+                        }
                         Text(job.statusText)
                             .font(.system(size: 11, design: .rounded))
                             .foregroundColor(job.error == "Cancelled" || job.isFinished || job.isPaused ? .secondary : state.accentColor)
@@ -880,7 +886,7 @@ public struct QuickPopoverView: View {
         }
         .buttonStyle(.plain)
         .help("Drop files here, or click to choose files to compress")
-        .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+        .onDrop(of: [.item], isTargeted: $isDropTargeted) { providers in
             extractAndProcess(providers: providers)
         }
     }
@@ -1064,6 +1070,7 @@ public struct QuickPopoverView: View {
                     .background(Capsule().fill(state.accentColor))
                 }
                 .buttonStyle(.plain)
+                .disabled(!state.recentResults.contains { selectedResultIds.contains($0.id) && $0.skipped != true })
                 
                 // Move to Folder Menu
                 Menu {
@@ -1163,14 +1170,14 @@ public struct QuickPopoverView: View {
     private var batchRenameModal: some View {
         let previewExample1 = renamePattern.replacingOccurrences(of: "{index}", with: "1").replacingOccurrences(of: "{i}", with: "1").replacingOccurrences(of: "#", with: "1")
         let previewExample2 = renamePattern.replacingOccurrences(of: "{index}", with: "2").replacingOccurrences(of: "{i}", with: "2").replacingOccurrences(of: "#", with: "2")
-        let selectedItems = state.recentResults.filter { selectedResultIds.contains($0.id) }
+        let selectedItems = state.recentResults.filter { selectedResultIds.contains($0.id) && $0.skipped != true }
         let ext1 = selectedItems.first?.outputURL.pathExtension ?? ""
         let ext2 = (selectedItems.dropFirst().first ?? selectedItems.first)?.outputURL.pathExtension ?? ext1
         let dotExt1 = ext1.isEmpty ? "" : ".\(ext1)"
         let dotExt2 = ext2.isEmpty ? "" : ".\(ext2)"
         
         return VStack(alignment: .leading, spacing: 12) {
-            Text("Batch Format Rename (\(selectedResultIds.count) files)")
+            Text("Batch Format Rename (\(selectedItems.count) files)")
                 .font(.system(size: 13, weight: .bold, design: .rounded))
             
             Text("Enter a format pattern. Use '#' or '{index}' for auto-incrementing numbers.")
@@ -1311,7 +1318,7 @@ public struct QuickPopoverView: View {
             .buttonStyle(.plain)
             .help("Drop files here, or click to choose files to compress")
             .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isDropTargeted)
-            .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+            .onDrop(of: [.item], isTargeted: $isDropTargeted) { providers in
                 extractAndProcess(providers: providers)
             }
 
@@ -1371,7 +1378,7 @@ public struct QuickPopoverView: View {
                         )
                 )
                 .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isQueueDropTargeted)
-                .onDrop(of: [.fileURL], isTargeted: $isQueueDropTargeted) { providers in
+                .onDrop(of: [.item], isTargeted: $isQueueDropTargeted) { providers in
                     extractAndAddToQueue(providers: providers)
                 }
             } else {
@@ -1448,7 +1455,7 @@ public struct QuickPopoverView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.surfaceWhite(0.08, for: colorScheme), style: StrokeStyle(lineWidth: 1, dash: [3]))
             )
-            .onDrop(of: [.fileURL], isTargeted: $isQueueDropTargeted) { providers in
+            .onDrop(of: [.item], isTargeted: $isQueueDropTargeted) { providers in
                 extractAndAddToQueue(providers: providers)
             }
         }
@@ -4266,7 +4273,7 @@ private struct FolderSectionItemView: View {
             }
         }
         .padding(.vertical, 2)
-        .onDrop(of: [.fileURL], isTargeted: $isFolderDropTargeted) { providers in
+        .onDrop(of: [.item], isTargeted: $isFolderDropTargeted) { providers in
             extractAndProcessFolderDrop(providers: providers, targetFolderId: folder.id)
         }
     }
@@ -4367,7 +4374,11 @@ private struct QuickPopoverHistoryRowItem: View {
         let label: String
         let fillOpacity: Double
 
-        if sizeDifference < 0 {
+        if item.skipped == true {
+            tint = .secondary
+            label = String(localized: "Skipped")
+            fillOpacity = 0.03
+        } else if sizeDifference < 0 {
             tint = state.accentColor
             label = String(format: "-%.0f%%", item.percentSaved)
             fillOpacity = 0.07
@@ -4424,6 +4435,9 @@ private struct QuickPopoverHistoryRowItem: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 
+                if let caption = item.outcomeCaption {
+                    Text(caption).font(.system(size: 11)).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 HStack(spacing: 5) {
                     Text(item.formattedOriginalSize)
                         .font(.system(size: 11, design: .rounded))
@@ -4458,6 +4472,7 @@ private struct QuickPopoverHistoryRowItem: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(item.skipped == true)
                 .help("Open Before/After Comparison Inspector")
                 .accessibilityLabel("Compare before and after")
                 

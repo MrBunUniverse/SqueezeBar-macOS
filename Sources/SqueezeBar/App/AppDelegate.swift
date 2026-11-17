@@ -159,7 +159,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
             
-            await MediaCompressionEngine.shared.processDroppedURLs(urls)
+            await MediaCompressionEngine.shared.processDroppedURLs(urls, reportEmpty: false)
         }
     }
     
