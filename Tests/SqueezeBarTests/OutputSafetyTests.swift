@@ -43,6 +43,11 @@ final class DestinationNamingTests: XCTestCase {
     }
 
     func testWatchFolderSuffixSkip() {
+        XCTAssertTrue(FolderWatchService.shouldSkip(fileName: "photo_min (1).jpg", suffix: "_min"))
+        XCTAssertTrue(FolderWatchService.shouldSkip(fileName: "photo_small (23).jpg", suffix: "_small"))
+        XCTAssertTrue(FolderWatchService.shouldSkip(fileName: "photo_min (2).jpg", suffix: "_small"))
+        XCTAssertFalse(FolderWatchService.shouldSkip(fileName: "photo_min (notes).jpg", suffix: "_min"))
+        XCTAssertFalse(FolderWatchService.shouldSkip(fileName: "photo_min (0).jpg", suffix: "_min"))
         XCTAssertFalse(FolderWatchService.shouldSkip(fileName: "admin_minutes.pdf", suffix: "_min"))
         XCTAssertTrue(FolderWatchService.shouldSkip(fileName: "photo_min.jpg", suffix: "_min"))
         XCTAssertTrue(FolderWatchService.shouldSkip(fileName: ".DS_Store", suffix: "_min"))

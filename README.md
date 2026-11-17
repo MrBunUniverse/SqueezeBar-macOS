@@ -24,7 +24,7 @@ Looking for an older version? See [Releases](../../releases).
 
 ## Private by design
 
-No accounts, no uploads, no telemetry. Free, with every feature included.
+Compression stays entirely on-device. Optional update checks contact GitHub and are off by default. No accounts, no file uploads, no telemetry. Free, with every feature included.
 
 ## License
 

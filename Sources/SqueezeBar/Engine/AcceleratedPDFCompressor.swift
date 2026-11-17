@@ -23,7 +23,11 @@ public enum PDFCompressorError: LocalizedError, Sendable {
 }
 
 public struct AcceleratedPDFCompressor: Sendable {
-    public init() {}
+    private let pageProvider: @Sendable (PDFDocument, Int) -> PDFPage?
+    public init() { pageProvider = { $0.page(at: $1) } }
+    init(pageProvider: @escaping @Sendable (PDFDocument, Int) -> PDFPage?) {
+        self.pageProvider = pageProvider
+    }
     
     public func outputExtension(for url: URL, config: CompressionConfiguration) -> String {
         return "pdf"
@@ -70,14 +74,15 @@ public struct AcceleratedPDFCompressor: Sendable {
         
         for index in 0..<totalPages {
             if control?.isCancelled == true { throw CancellationError() }
-            autoreleasepool {
-                guard let page = sourceDoc.page(at: index) else { return }
+            try autoreleasepool {
+                guard let page = pageProvider(sourceDoc, index) else { throw PDFCompressorError.cannotCreatePage }
                 let mediaBounds = page.bounds(for: .mediaBox)
                 let pageRotation = page.rotation
                 if pageRotation != 0 {
                     page.rotation = 0
                 }
                 
+                defer { page.rotation = pageRotation }
                 let scale = max(0.5, targetDPI / 72.0)
                 let pixelW = max(1, Int((mediaBounds.width * scale).rounded()))
                 let pixelH = max(1, Int((mediaBounds.height * scale).rounded()))
@@ -102,7 +107,7 @@ public struct AcceleratedPDFCompressor: Sendable {
                     space: colorSpace,
                     bitmapInfo: bitmapInfo
                 ) else {
-                    return
+                    throw PDFCompressorError.cannotCreatePage
                 }
                 
                 context.interpolationQuality = .high
@@ -122,7 +127,7 @@ public struct AcceleratedPDFCompressor: Sendable {
                 context.restoreGState()
                 
                 guard let cgImage = context.makeImage() else {
-                    return
+                    throw PDFCompressorError.cannotCreatePage
                 }
                 
                 // JPEG Recompression of page image
@@ -133,18 +138,18 @@ public struct AcceleratedPDFCompressor: Sendable {
                     1,
                     nil
                 ) else {
-                    return
+                    throw PDFCompressorError.cannotCreatePage
                 }
                 
                 let options: [CFString: Any] = [
                     kCGImageDestinationLossyCompressionQuality: targetQuality as CFNumber
                 ]
                 CGImageDestinationAddImage(dest, cgImage, options as CFDictionary)
-                CGImageDestinationFinalize(dest)
+                guard CGImageDestinationFinalize(dest) else { throw PDFCompressorError.cannotCreatePage }
                 
                 guard let compressedImage = NSImage(data: imgData as Data),
                       let newPage = PDFPage(image: compressedImage) else {
-                    return
+                    throw PDFCompressorError.cannotCreatePage
                 }
                 
                 newPage.setBounds(mediaBounds, for: .mediaBox)
@@ -168,7 +173,7 @@ public struct AcceleratedPDFCompressor: Sendable {
             ]
         }
         
-        guard outputDoc.pageCount > 0 else {
+        guard outputDoc.pageCount == totalPages else {
             throw PDFCompressorError.cannotCreatePage
         }
         

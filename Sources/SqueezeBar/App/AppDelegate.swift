@@ -10,6 +10,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Ensure the app operates strictly as an accessory utility without a dock icon
         NSApp.setActivationPolicy(.accessory)
         setupMainMenu()
+        Task { await UpdateChecker.shared.check(manual: false) }
         
         // Register for macOS Services provider
         NSApp.servicesProvider = self
@@ -66,6 +67,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = mainMenu
     }
     
+    public func applicationDidBecomeActive(_ notification: Notification) {
+        Task { await UpdateChecker.shared.check(manual: false) }
+    }
+
     // MARK: - Quit
     // Every quit path (DropBall menu, status menu, popover, Cmd+Q) ends in NSApp.terminate, so they all pass through here.
     private var isAwaitingTerminateReply = false

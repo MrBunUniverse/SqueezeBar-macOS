@@ -111,9 +111,13 @@ public final class FolderWatchService: @unchecked Sendable {
         if fileName.hasPrefix(".") || fileName.hasPrefix("clipboard_") {
             return true
         }
-        guard !suffix.isEmpty else { return false }
+
         let baseName = (fileName as NSString).deletingPathExtension
-        return baseName.hasSuffix(suffix)
+        return Set([suffix, "_min"]).filter { !$0.isEmpty }.contains { ending in
+            if baseName.hasSuffix(ending) { return true }
+            let pattern = NSRegularExpression.escapedPattern(for: ending) + " \\([1-9][0-9]*\\)$"
+            return baseName.range(of: pattern, options: .regularExpression) != nil
+        }
     }
 
     /// Polls all candidates together until each file's size stops changing, handing off stable batches each second. Gives up after ~2 minutes.

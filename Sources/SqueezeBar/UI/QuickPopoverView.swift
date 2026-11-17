@@ -187,6 +187,7 @@ struct DetachedGlassRim: View {
 }
 
 public struct QuickPopoverView: View {
+    @ObservedObject private var updates = UpdateChecker.shared
     @EnvironmentObject var state: AppState
     @Environment(\.colorScheme) private var colorScheme
     // Shows job progress (header, activity list), so it has to observe the job board directly.
@@ -348,6 +349,19 @@ public struct QuickPopoverView: View {
         VStack(spacing: 0) {
             // Header Bar
             headerView
+            if let release = updates.bannerRelease {
+                HStack {
+                    Text("Version \(release.tag_name) is available")
+                    Spacer()
+                    Button("View update") {
+                        if let url = release.trustedURL { NSWorkspace.shared.open(url) }
+                    }
+                    Button("Later") { updates.dismiss() }
+                }
+                .font(.system(size: 11, design: .rounded))
+                .padding(10)
+                .accessibilityElement(children: .contain)
+            }
             
             Divider()
                 .opacity(0.3)
@@ -2775,6 +2789,17 @@ public struct QuickPopoverView: View {
             .animation(.easeInOut(duration: 0.18), value: state.soundEnabled)
 
             settingsGroupCard("System", icon: "gearshape") {
+                settingsToggleRow("Check for updates automatically", isOn: $updates.automatic)
+                Text("Checks GitHub for new versions. Your files are never uploaded.")
+                    .font(.system(size: 10, design: .rounded))
+                    .foregroundColor(.secondary)
+                Button("Check for Updates") { Task { await updates.check(manual: true) } }
+                    .disabled(updates.checking)
+                if updates.checking { Text("Checking for updates…") }
+                if let feedback = updates.feedback { Text(feedback).font(.caption) }
+                Button("Report a Bug") { NSWorkspace.shared.open(UpdateChecker.bugReportURL()) }
+                settingsDivider()
+
                 settingsToggleRow("Launch at login", isOn: $state.launchAtLogin, action: {
                     state.setLaunchAtLogin(enabled: !state.launchAtLogin)
                 })

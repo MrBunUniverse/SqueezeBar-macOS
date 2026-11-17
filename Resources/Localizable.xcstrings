@@ -255,6 +255,9 @@
     "Already optimized — original kept, no new file saved" : {
 
     },
+    "An update is available." : {
+
+    },
     "Animated GIF" : {
 
     },
@@ -352,6 +355,18 @@
     "Change…" : {
 
     },
+    "Check for Updates" : {
+
+    },
+    "Check for updates automatically" : {
+
+    },
+    "Checking for updates…" : {
+
+    },
+    "Checks GitHub for new versions. Your files are never uploaded." : {
+
+    },
     "Choose a folder to allow access to your media files." : {
 
     },
@@ -446,6 +461,9 @@
 
     },
     "Couldn’t access that folder. Please choose another folder." : {
+
+    },
+    "Couldn’t check for updates. Please try again later." : {
 
     },
     "Couldn’t read that file. Try dragging it from Finder." : {
@@ -736,6 +754,9 @@
     "Large" : {
 
     },
+    "Later" : {
+
+    },
     "Launch at login" : {
 
     },
@@ -1006,6 +1027,9 @@
     "Rename Folder" : {
 
     },
+    "Report a Bug" : {
+
+    },
     "Reset" : {
 
     },
@@ -1214,6 +1238,9 @@
     "Unsupported media format" : {
 
     },
+    "Version %@ is available" : {
+
+    },
     "Video" : {
 
     },
@@ -1227,6 +1254,9 @@
 
     },
     "Video encoding failed: %@" : {
+
+    },
+    "View update" : {
 
     },
     "Visually Lossless" : {
@@ -1260,6 +1290,9 @@
 
     },
     "You can also select files later." : {
+
+    },
+    "You’re up to date." : {
 
     },
     "_min" : {
