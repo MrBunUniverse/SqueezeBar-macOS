@@ -22,7 +22,7 @@ public struct FloatingBallView: View {
     public init() {}
     
     private var isTuckedState: Bool {
-        liquidModel.isTucked && !isHovered && !isDropTargeted && !jobs.isProcessing && !liquidModel.isMoving
+        liquidModel.isTucked && !isHovered && !isDropTargeted && !jobs.isProcessing && !liquidModel.isMoving && !liquidModel.isSummoned
     }
     
     private var isRightEdge: Bool {
@@ -39,7 +39,7 @@ public struct FloatingBallView: View {
     
     // Smooth X Offset: Tucked vs Popped/Revealed
     private var targetXOffset: CGFloat {
-        if liquidModel.isMoving {
+        if liquidModel.isMoving || liquidModel.isSummoned {
             return 0
         }
         let popoutOffset: CGFloat = 22
@@ -121,6 +121,7 @@ public struct FloatingBallView: View {
         }
         .frame(width: FloatingBallController.panelSize, height: FloatingBallController.panelSize)
         .onChange(of: isDropTargeted) { _, targeted in
+            liquidModel.isDropTargeted = targeted
             if targeted {
                 liquidModel.revealFromTuck()
             }
@@ -282,11 +283,16 @@ public struct FloatingBallView: View {
     }
     
     private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        if !fileProviders.isEmpty {
+            FloatingBallController.shared.markDropInitiated()
+        }
+
         var urls: [URL] = []
         let lock = NSLock()
         let group = DispatchGroup()
         
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        for provider in fileProviders {
             group.enter()
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
                 defer { group.leave() }
@@ -299,7 +305,10 @@ public struct FloatingBallView: View {
         }
         
         group.notify(queue: .main) {
-            guard !urls.isEmpty else { return }
+            guard !urls.isEmpty else {
+                FloatingBallController.shared.cancelPendingDropAndReturn()
+                return
+            }
             
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             
@@ -308,7 +317,7 @@ public struct FloatingBallView: View {
             }
         }
         
-        return true
+        return !fileProviders.isEmpty
     }
 }
 

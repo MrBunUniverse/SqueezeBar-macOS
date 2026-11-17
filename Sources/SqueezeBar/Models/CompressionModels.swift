@@ -71,17 +71,6 @@ public enum SoundEffectTheme: String, Codable, Sendable, CaseIterable {
     case sciFiWarp = "Sci-Fi Warp"
     case heroFanfare = "Hero Fanfare"
     
-    public var icon: String {
-        switch self {
-        case .defaultGlass: return "sparkles"
-        case .arcade8Bit: return "gamecontroller.fill"
-        case .bubblePop: return "drop.fill"
-        case .hydraulicPress: return "wrench.and.screwdriver.fill"
-        case .sciFiWarp: return "bolt.horizontal.fill"
-        case .heroFanfare: return "horn.fill"
-        }
-    }
-    
     public var systemSoundName: String {
         switch self {
         case .defaultGlass: return "Glass"

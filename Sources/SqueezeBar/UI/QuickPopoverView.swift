@@ -84,7 +84,6 @@ public struct QuickPopoverView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var isWindowDropTargeted: Bool = false
-    @State private var isAppearanceExpanded = false
     @State private var activeFormatCategory: MediaFormatCategory = .images
     @State private var isFormatDrawerExpanded: Bool = false
     
@@ -101,7 +100,6 @@ public struct QuickPopoverView: View {
     // Liquid Glass Collective Hover States (Apple-like Focus Bounce)
     @State private var hoveredTargetLimitMode: TargetSizeMode? = nil
     @State private var hoveredUIScaleOption: UIScaleOption? = nil
-    @State private var soundThemeLiquidDirection = PillLiquidDirection.leadingToTrailing
     
     enum PopoverTab: String, CaseIterable {
         case activity = "Activity"
@@ -164,17 +162,6 @@ public struct QuickPopoverView: View {
                 if #available(macOS 26.0, *) {
                     Color.clear
                         .glassEffect(.clear.tint(Color.black.opacity(0.3)), in: RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0))
-                        .allowsHitTesting(false)
-                }
-
-                if state.appGlassDepth > 0 {
-                    RoundedRectangle(cornerRadius: isDetachedWindow ? 14 : 0)
-                        .fill(LinearGradient(
-                            colors: [.white.opacity(0.16), .clear, .black.opacity(0.32)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        ))
-                        .opacity(state.appGlassDepth)
                         .allowsHitTesting(false)
                 }
 
@@ -2213,6 +2200,7 @@ public struct QuickPopoverView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 content()
+                    .font(.system(size: 11, design: .rounded))
             }
             .padding(14)
             .background(
@@ -2237,7 +2225,7 @@ public struct QuickPopoverView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 5) {
                         Text(title)
-                            .font(.system(size: 12, design: .rounded))
+                            .font(.system(size: 11, design: .rounded))
                             .foregroundColor(.primary)
                         if let badge {
                             Text(badge)
@@ -2250,7 +2238,8 @@ public struct QuickPopoverView: View {
                     }
                     if let detail {
                         Text(detail)
-                            .font(.system(size: 11, design: .rounded))
+                            .font(.system(size: 10.5, design: .rounded))
+                            .fixedSize(horizontal: false, vertical: true)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -2288,29 +2277,10 @@ public struct QuickPopoverView: View {
 
     private var generalSettingsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // Output: where files go and what they are called
-            settingsGroupCard("Output", icon: "folder", summary: saveDestinationSummary) {
-                settingsToggleRow("Create subfolder for compressed files", isOn: $state.exportToSubfolder)
-
-                if state.exportToSubfolder {
-                    HStack(spacing: 6) {
-                        Text("Subfolder name")
-                            .font(.system(size: 10.5, design: .rounded))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        TextField("Squeezed", text: $state.subfolderName)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 110)
-                            .font(.system(size: 10.5, design: .rounded))
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                settingsDivider()
-
+            settingsGroupCard("Saving", icon: "folder", summary: saveDestinationSummary) {
                 HStack(spacing: 8) {
-                    Text("Save to folder")
-                        .font(.system(size: 12, design: .rounded))
+                    Text("Save to")
+                        .font(.system(size: 11, design: .rounded))
                     Spacer(minLength: 8)
                     Text(state.customOutputFolder ?? String(localized: "Next to original"))
                         .font(.system(size: 10.5, design: .rounded))
@@ -2330,8 +2300,8 @@ public struct QuickPopoverView: View {
                 settingsDivider()
 
                 HStack {
-                    Text("Output file suffix")
-                        .font(.system(size: 12, design: .rounded))
+                    Text("File suffix")
+                        .font(.system(size: 11, design: .rounded))
                     Spacer()
                     TextField("_min", text: $state.outputSuffix)
                         .textFieldStyle(.roundedBorder)
@@ -2340,25 +2310,38 @@ public struct QuickPopoverView: View {
 
                 settingsDivider()
 
-                VStack(alignment: .leading, spacing: 4) {
-                    settingsToggleRow("Strip EXIF / metadata", isOn: $state.stripMetadata, detail: "Removes location and camera info")
-                    Text("Applies to images. Location data is always removed.")
-                        .font(.system(size: 10.5, design: .rounded))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+                settingsToggleRow("Subfolder", isOn: $state.exportToSubfolder)
 
-            // Input methods other than the menu bar itself
-            settingsGroupCard("Input methods", icon: "square.and.arrow.down") {
+                if state.exportToSubfolder {
+                    settingsDivider()
+                    HStack(spacing: 6) {
+                        Text("Subfolder name")
+                            .font(.system(size: 10.5, design: .rounded))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        TextField("Squeezed", text: $state.subfolderName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 110)
+                            .font(.system(size: 10.5, design: .rounded))
+                    }
+                    .transition(.opacity)
+                }
+
+                settingsDivider()
+                settingsToggleRow("Remove metadata", isOn: $state.stripMetadata, detail: "Applies to images. Location data is always removed.")
+            }
+            settingsGroupCard("Add files", icon: "square.and.arrow.down") {
                 settingsToggleRow("DropBall", isOn: $state.floatingBallEnabled, detail: "Floating drop target that snaps to a screen edge")
                 settingsDivider()
-                settingsToggleRow("Finder right-click quick action", isOn: $state.finderServiceEnabled, badge: "BETA")
+                settingsToggleRow("Shake to summon", isOn: $state.shakeToSummonEnabled, detail: "Shake a file while dragging to bring the ball to your cursor")
+                settingsDivider()
+                settingsToggleRow("Finder action", isOn: $state.finderServiceEnabled, badge: "BETA")
                 settingsDivider()
                 VStack(alignment: .leading, spacing: 8) {
-                    settingsToggleRow("Auto-squeeze watch folder", isOn: $state.isWatchFolderEnabled, detail: "Compresses new files added to this folder")
+                    settingsToggleRow("Watch folder", isOn: $state.isWatchFolderEnabled, detail: "Compresses new files added to this folder")
 
                     if state.isWatchFolderEnabled {
+                        settingsDivider()
                         HStack(spacing: 8) {
                             Text(state.watchFolderPath ?? String(localized: "No folder selected"))
                                 .font(.system(size: 10.5, design: .rounded))
@@ -2371,7 +2354,7 @@ public struct QuickPopoverView: View {
                             }
                             .controlSize(.small)
                         }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .transition(.opacity)
                     }
                 }
                 .onChange(of: state.isWatchFolderEnabled) { _, enabled in
@@ -2383,266 +2366,11 @@ public struct QuickPopoverView: View {
                 }
             }
 
-            // Feedback: completion chime and soundpack
-            settingsGroupCard("Completion feedback", icon: "speaker.wave.3.fill", summary: state.soundEnabled ? state.soundTheme.displayName : String(localized: "Off")) {
-                settingsToggleRow("Sound chime on completion", isOn: $state.soundEnabled)
-
-                VStack(alignment: .leading, spacing: 10) {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                    ForEach(SoundEffectTheme.allCases, id: \.self) { sound in
-                        Button {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.75)) {
-                                state.soundTheme = sound
-                            }
-                            // Play preview of sound
-                            NSSound(named: sound.systemSoundName)?.play()
-                        } label: {
-                            LiquidSelectionReader(isSelected: state.soundTheme == sound) { progress, flowsToLeading in
-                                LiquidRevealLabel(
-                                    progress: progress,
-                                    flowsToLeading: flowsToLeading,
-                                    baseColor: .primary.opacity(0.85),
-                                    revealColor: .white
-                                ) { color in
-                                    HStack(spacing: 4) {
-                                        Image(systemName: sound.icon)
-                                            .font(.system(size: 10.5, design: .rounded))
-                                        Text(sound.shortName)
-                                            .font(.system(size: 10.5, weight: state.soundTheme == sound ? .semibold : .regular, design: .rounded))
-                                    }
-                                    .foregroundColor(color)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 4.5)
-                                    .frame(maxWidth: .infinity)
-                                }
-                                .background(
-                                    ZStack {
-                                        Capsule().fill(Color.surfaceWhite(0.05, for: colorScheme))
-                                        LiquidFillLayer(progress: progress, flowsToLeading: flowsToLeading, accentColor: state.accentColor, isSelected: state.soundTheme == sound)
-                                    }
-                                    .clipShape(Capsule())
-                                )
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .environment(\.pillLiquidDirection, soundThemeLiquidDirection)
-                .onChange(of: state.soundTheme) { oldSound, newSound in
-                    guard let oldIndex = SoundEffectTheme.allCases.firstIndex(of: oldSound),
-                          let newIndex = SoundEffectTheme.allCases.firstIndex(of: newSound),
-                          oldIndex != newIndex else { return }
-                    let oldColumn = oldIndex % 3
-                    let newColumn = newIndex % 3
-                    let movesRight = oldIndex / 3 == newIndex / 3
-                        ? newColumn > oldColumn
-                        : newIndex > oldIndex
-                    soundThemeLiquidDirection = movesRight ? .leadingToTrailing : .trailingToLeading
-                }
-                
-                Text("Plays dynamic audio feedback upon completing batch or single file squeezes.")
-                    .font(.system(size: 10.5, design: .rounded))
-                    .foregroundColor(.secondary)
-                }
-                .opacity(state.soundEnabled ? 1 : 0.4)
-                .disabled(!state.soundEnabled)
-            }
-
-            // General: app-level behaviour
-            settingsGroupCard("General", icon: "gearshape") {
-                settingsToggleRow("Launch at system startup", isOn: $state.launchAtLogin, action: {
-                    state.setLaunchAtLogin(enabled: !state.launchAtLogin)
-                })
-                settingsDivider()
-                Button {
-                    WelcomeWindowController.shared.show()
-                } label: {
-                    HStack(alignment: .center) {
-                        Text("Welcome & file access")
-                            .font(.system(size: 12, design: .rounded))
-                            .foregroundColor(.primary)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, design: .rounded))
-                            .foregroundColor(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                settingsDivider()
-                Button("Reset all compression stats", role: .destructive) {
-                    showResetStatsConfirmation = true
-                }
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundColor(.red.opacity(0.85))
-                .buttonStyle(.plain)
-            }
-            .confirmationDialog("Reset all compression stats?", isPresented: $showResetStatsConfirmation, titleVisibility: .visible) {
-                Button("Reset stats", role: .destructive) { state.resetAllStats() }
-                Button("Cancel", role: .cancel) {}
-            }
-            
-            // Appearance group (scaling, glass, accent colour); collapsed by default
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                        isAppearanceExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Label("Appearance", systemImage: "paintbrush")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("Scale, glass, accent color")
-                            .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                            .foregroundColor(.secondary)
-                        Image(systemName: isAppearanceExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                            .foregroundColor(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if isAppearanceExpanded {
-                VStack(alignment: .leading, spacing: 12) {
-                // UI Scaling / Display Density Card
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Label("Interface scaling", systemImage: "arrow.up.left.and.arrow.down.right")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        Spacer()
-                        Text("\(state.uiScale.displayName) (\(state.uiScale.percentageLabel))")
-                            .font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                            .foregroundColor(state.accentColor)
-                    }
-                
-                    // Liquid Pill Glider with Matched Geometry and Collective Focus Bounce
-                    HStack(spacing: 5) {
-                        ForEach(UIScaleOption.allCases, id: \.self) { option in
-                            let isHovered = hoveredUIScaleOption == option
-                            let isOtherHovered = hoveredUIScaleOption != nil && !isHovered
-                        
-                            UniversalPillGliderItem(
-                                item: option,
-                                title: "\(option.displayName) (\(option.percentageLabel))",
-                                icon: state.uiScale == option ? "checkmark" : (option == .small ? "arrow.down.right.and.arrow.up.left" : (option == .large ? "arrow.up.left.and.arrow.down.right" : "rectangle.center.inset.filled")),
-                                isSelected: state.uiScale == option,
-                                accentColor: state.accentColor,
-                                contrastTextColor: state.contrastTextColor
-                            ) {
-                                withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
-                                    state.uiScale = option
-                                }
-                            }
-                            .scaleEffect(isHovered ? 1.015 : 1.0)
-                            .opacity(isOtherHovered ? 0.88 : 1.0)
-                            .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: hoveredUIScaleOption)
-                            .onHover { hovering in
-                                withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) {
-                                    if hovering {
-                                        hoveredUIScaleOption = option
-                                    } else if hoveredUIScaleOption == option {
-                                        hoveredUIScaleOption = nil
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .modifier(SelectedPillDragGesture(
-                        options: UIScaleOption.allCases,
-                        selected: state.uiScale
-                    ) { option in
-                        state.uiScale = option
-                    })
-
-                }
-                Divider().opacity(0.15)
-
-                // App transparency and Liquid Glass controls
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        Label("Window glass", systemImage: "sparkles")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        Spacer(minLength: 4)
-                        Button("Reset") {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                                state.appTransparency = 0
-                                state.appGlassFrost = 0.12
-                                state.appGlassDepth = 0.65
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11, design: .rounded))
-                        .foregroundColor(.secondary)
-                    }
-
-                    do {
-                        VStack(alignment: .leading, spacing: 9) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text("Transparency")
-                                    Spacer()
-                                    Text("\(Int((state.appTransparency * 100).rounded()))%")
-                                        .foregroundColor(state.accentColor)
-                                }
-                                .font(.system(size: 10.5, weight: .medium, design: .rounded))
-
-                                LiquidGlassSlider(
-                                    value: $state.appTransparency,
-                                    range: 0...1,
-                                    accentColor: state.accentColor
-                                )
-                                .accessibilityLabel("App transparency")
-
-                            }
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text("Blur")
-                                    Spacer()
-                                    Text("\(Int((state.appGlassFrost * 100).rounded()))%")
-                                        .foregroundColor(state.accentColor)
-                                }
-                                .font(.system(size: 10.5, weight: .medium, design: .rounded))
-
-                                LiquidGlassSlider(
-                                    value: $state.appGlassFrost,
-                                    range: 0...1,
-                                    accentColor: state.accentColor
-                                )
-                                .accessibilityLabel("Window blur")
-
-                            }
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text("Shading")
-                                    Spacer()
-                                    Text("\(Int((state.appGlassDepth * 100).rounded()))%")
-                                        .foregroundColor(state.accentColor)
-                                }
-                                .font(.system(size: 10.5, weight: .medium, design: .rounded))
-
-                                LiquidGlassSlider(
-                                    value: $state.appGlassDepth,
-                                    range: 0...1,
-                                    accentColor: state.accentColor
-                                )
-                                .accessibilityLabel("Window shading")
-
-                            }
-                        }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-                Divider().opacity(0.15)
-
-                // Apple Minimalist Theme Accent Color Card
+            settingsGroupCard("Appearance", icon: "paintbrush", summary: String(localized: "Scale, glass, accent color")) {
                 VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
                     Text("Accent color")
-                        .font(.system(size: 12, design: .rounded))
+                    Spacer(minLength: 8)
                     // Native macOS Style Swatch Circles
                     HStack(spacing: 8) {
                         ForEach(AccentColorTheme.allCases, id: \.self) { theme in
@@ -2664,7 +2392,7 @@ public struct QuickPopoverView: View {
                                             )
                                             .clipShape(Circle())
                                             .frame(width: 22, height: 22)
-                                        
+
                                             // Center preview orb of current custom color
                                             Circle()
                                                 .fill(state.accentColor)
@@ -2676,7 +2404,7 @@ public struct QuickPopoverView: View {
                                             .fill(themeColor(for: theme))
                                             .frame(width: 22, height: 22)
                                     }
-                                
+
                                     // Selected Ring
                                     if state.accentTheme == theme {
                                         Circle()
@@ -2692,22 +2420,23 @@ public struct QuickPopoverView: View {
                         }
                     }
                     .padding(.vertical, 2)
-                
+                    }
+
                     // Custom HEX Color Tab (Expands when Custom Color Wheel is active)
                     if state.accentTheme == .custom {
                         VStack(alignment: .leading, spacing: 6) {
                             Divider().opacity(0.15)
-                        
+
                             HStack(spacing: 8) {
                                 Text("HEX code")
                                     .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                                     .foregroundColor(.secondary)
-                            
+
                                 HStack(spacing: 3) {
                                     Text("#")
                                         .font(.system(size: 10.5, weight: .bold, design: .rounded))
                                         .foregroundColor(.secondary)
-                                
+
                                     TextField("007AFF", text: Binding(
                                         get: { state.customAccentHex },
                                         set: { newHex in
@@ -2729,7 +2458,7 @@ public struct QuickPopoverView: View {
                                                 .stroke(state.accentColor.opacity(0.4), lineWidth: 0.75)
                                         )
                                 )
-                            
+
                                 // Anchored Color Wheel Button (Opens Color Wheel right under button)
                                 Button {
                                     CustomColorPanelManager.shared.toggle(initialColor: state.accentColor)
@@ -2743,7 +2472,7 @@ public struct QuickPopoverView: View {
                                                     .strokeBorder(Color.white.opacity(0.40), lineWidth: 0.75)
                                             )
                                             .shadow(color: Color.black.opacity(0.2), radius: 2)
-                                    
+
                                         Image(systemName: "paintpalette")
                                             .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                                             .foregroundColor(.secondary)
@@ -2761,7 +2490,7 @@ public struct QuickPopoverView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .help("Open Anchored Color Wheel")
-                            
+
                                 // Screen Eyedropper Loupe Button
                                 if #available(macOS 10.15, *) {
                                     Button {
@@ -2793,9 +2522,9 @@ public struct QuickPopoverView: View {
                                     .buttonStyle(.plain)
                                     .help("Pick color from screen")
                                 }
-                            
+
                                 Spacer()
-                            
+
                                 // Quick Popular Hex Swatches
                                 HStack(spacing: 4) {
                                     ForEach(["FF2D55", "5856D6", "00C7BE", "30D158", "FF9500"], id: \.self) { quickHex in
@@ -2814,30 +2543,164 @@ public struct QuickPopoverView: View {
                             }
                             .padding(.top, 2)
                         }
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .transition(.opacity)
                     }
-                
+
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                settingsDivider()
+                HStack(spacing: 8) {
+                    Text("Interface size")
+                    Spacer(minLength: 8)
+                    // Liquid Pill Glider with Matched Geometry and Collective Focus Bounce
+                    HStack(spacing: 5) {
+                        ForEach(UIScaleOption.allCases, id: \.self) { option in
+                            let isHovered = hoveredUIScaleOption == option
+                            let isOtherHovered = hoveredUIScaleOption != nil && !isHovered
+
+                            UniversalPillGliderItem(
+                                item: option,
+                                title: option.displayName,
+                                icon: state.uiScale == option ? "checkmark" : (option == .small ? "arrow.down.right.and.arrow.up.left" : (option == .large ? "arrow.up.left.and.arrow.down.right" : "rectangle.center.inset.filled")),
+                                isSelected: state.uiScale == option,
+                                accentColor: state.accentColor,
+                                contrastTextColor: state.contrastTextColor
+                            ) {
+                                withAnimation(.spring(response: 0.26, dampingFraction: 0.84)) {
+                                    state.uiScale = option
+                                }
+                            }
+                            .help("\(option.displayName) (\(option.percentageLabel))")
+                            .scaleEffect(isHovered ? 1.015 : 1.0)
+                            .opacity(isOtherHovered ? 0.88 : 1.0)
+                            .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.86), value: hoveredUIScaleOption)
+                            .onHover { hovering in
+                                withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) {
+                                    if hovering {
+                                        hoveredUIScaleOption = option
+                                    } else if hoveredUIScaleOption == option {
+                                        hoveredUIScaleOption = nil
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .modifier(SelectedPillDragGesture(
+                        options: UIScaleOption.allCases,
+                        selected: state.uiScale
+                    ) { option in
+                        state.uiScale = option
+                    })
+
                 }
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.surfaceWhite(0.035, for: colorScheme))
-                    .darkControlSurface(RoundedRectangle(cornerRadius: 10))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .strokeBorder(Color.surfaceWhite(0.07, for: colorScheme), lineWidth: 0.5)
-                        )
-                )
-            
+                settingsDivider()
+                HStack(spacing: 8) {
+                    Text("Transparency")
+                    Spacer(minLength: 8)
+                    LiquidGlassSlider(value: $state.appTransparency, range: 0...1, accentColor: state.accentColor)
+                        .frame(width: 160)
+                        .accessibilityLabel("App transparency")
+                    Text("\(Int((state.appTransparency * 100).rounded()))%")
+                        .foregroundColor(state.accentColor)
+                        .frame(width: 34, alignment: .trailing)
+                    Button("Reset") {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            state.appTransparency = 0
+                            state.appGlassFrost = 0.12
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                }
+                settingsDivider()
+                HStack(spacing: 8) {
+                    Text("Blur")
+                    Spacer(minLength: 8)
+                    LiquidGlassSlider(value: $state.appGlassFrost, range: 0...1, accentColor: state.accentColor)
+                        .frame(width: 160)
+                        .accessibilityLabel("Window blur")
+                    Text("\(Int((state.appGlassFrost * 100).rounded()))%")
+                        .foregroundColor(state.accentColor)
+                        .frame(width: 34, alignment: .trailing)
                 }
             }
-            .padding(.horizontal, 4)
+            settingsGroupCard("Sound", icon: "speaker.wave.3.fill", summary: state.soundEnabled ? state.soundTheme.displayName : String(localized: "Off")) {
+                settingsToggleRow("Completion sound", isOn: $state.soundEnabled)
+
+                if state.soundEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        settingsDivider()
+                        HStack(spacing: 8) {
+                            Text("Sound")
+                            Spacer(minLength: 8)
+                            Picker("Sound", selection: Binding(
+                                get: { state.soundTheme },
+                                set: { sound in
+                                    state.soundTheme = sound
+                                    NSSound(named: sound.systemSoundName)?.play()
+                                }
+                            )) {
+                                ForEach(SoundEffectTheme.allCases, id: \.self) { sound in
+                                    Text(sound.displayName).tag(sound)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .fixedSize()
+                            .accessibilityLabel("Sound")
+                            Button {
+                                NSSound(named: state.soundTheme.systemSoundName)?.play()
+                            } label: {
+                                Image(systemName: "play.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Preview sound")
+                            .accessibilityLabel("Preview sound")
+                        }
+                        .font(.system(size: 11, design: .rounded))
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: state.soundEnabled)
+
+            settingsGroupCard("System", icon: "gearshape") {
+                settingsToggleRow("Launch at login", isOn: $state.launchAtLogin, action: {
+                    state.setLaunchAtLogin(enabled: !state.launchAtLogin)
+                })
+                settingsDivider()
+                Button {
+                    WelcomeWindowController.shared.show()
+                } label: {
+                    HStack(alignment: .center) {
+                        Text("Welcome & file access")
+                            .font(.system(size: 11, design: .rounded))
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                settingsDivider()
+                Button("Reset statistics…", role: .destructive) {
+                    showResetStatsConfirmation = true
+                }
+                .font(.system(size: 11, design: .rounded))
+                .foregroundColor(.red.opacity(0.85))
+                .buttonStyle(.plain)
+            }
+            .confirmationDialog("Reset all compression stats?", isPresented: $showResetStatsConfirmation, titleVisibility: .visible) {
+                Button("Reset stats", role: .destructive) { state.resetAllStats() }
+                Button("Cancel", role: .cancel) {}
+            }
 
         }
     }
-    
+
     private func selectWatchFolder() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -3445,209 +3308,6 @@ struct LiquidGlassSlider: View {
             let increment = step ?? (range.upperBound - range.lowerBound) / 20
             let proposed = direction == .increment ? value + increment : value - increment
             value = min(max(proposed, range.lowerBound), range.upperBound)
-        }
-    }
-}
-
-private enum PillLiquidDirection {
-    case leadingToTrailing
-    case trailingToLeading
-}
-
-private struct PillLiquidDirectionKey: EnvironmentKey {
-    static let defaultValue = PillLiquidDirection.leadingToTrailing
-}
-
-private extension EnvironmentValues {
-    var pillLiquidDirection: PillLiquidDirection {
-        get { self[PillLiquidDirectionKey.self] }
-        set { self[PillLiquidDirectionKey.self] = newValue }
-    }
-}
-
-/// The liquid body of a selected pill: everything between the wavy front edge and the far end of the pill.
-private struct LiquidPillFillShape: Shape {
-    var progress: CGFloat
-    var flowsToLeading: Bool
-
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    /// Points along the front edge, top to bottom. The edge ripples and bulges most mid-pour and is flat when at rest.
-    static func edgePoints(in rect: CGRect, progress: CGFloat, flowsToLeading: Bool, segments: Int = 28) -> [CGPoint] {
-        let amount = min(max(progress, 0), 1)
-        let frontierX = flowsToLeading
-            ? rect.maxX - rect.width * amount
-            : rect.minX + rect.width * amount
-        let travel = CGFloat(sin(Double(amount) * .pi))
-        let amplitude = rect.height * 0.20 * travel
-        let bulge = rect.height * 0.16 * travel
-        let phase = Double(amount) * .pi * 1.6
-        let direction: CGFloat = flowsToLeading ? -1 : 1
-        return (0...segments).map { index -> CGPoint in
-            let y = Double(index) / Double(segments)
-            let envelope = sin(Double.pi * y)
-            let ripple = sin(2 * Double.pi * y - phase) + 0.35 * sin(4 * Double.pi * y + phase * 1.3)
-            let offset = (CGFloat(envelope * ripple) * amplitude + CGFloat(envelope) * bulge) * direction
-            return CGPoint(x: frontierX + offset, y: rect.minY + rect.height * CGFloat(y))
-        }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let edge = Self.edgePoints(in: rect, progress: progress, flowsToLeading: flowsToLeading)
-        let segments = edge.count - 1
-        var path = Path()
-
-        if flowsToLeading {
-            path.move(to: edge[0])
-        } else {
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: edge[0])
-        }
-
-        for index in 0..<segments {
-            let start = edge[index]
-            let end = edge[index + 1]
-            let previous = edge[max(index - 1, 0)]
-            let following = edge[min(index + 2, segments)]
-            let control1 = CGPoint(
-                x: start.x + (end.x - previous.x) / 6,
-                y: start.y + (end.y - previous.y) / 6
-            )
-            let control2 = CGPoint(
-                x: end.x - (following.x - start.x) / 6,
-                y: end.y - (following.y - start.y) / 6
-            )
-            path.addCurve(to: end, control1: control1, control2: control2)
-        }
-
-        if flowsToLeading {
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        } else {
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        }
-
-        path.closeSubpath()
-        return path
-    }
-}
-
-/// A thin glossy band just behind the front edge; it grows while the liquid moves and vanishes at rest.
-private struct LiquidFrontHighlightShape: Shape {
-    var progress: CGFloat
-    var flowsToLeading: Bool
-
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let amount = min(max(progress, 0), 1)
-        let thickness = 2.4 * CGFloat(sin(Double(amount) * .pi))
-        guard thickness > 0.05 else { return Path() }
-        let edge = LiquidPillFillShape.edgePoints(in: rect, progress: progress, flowsToLeading: flowsToLeading)
-        let behind: CGFloat = flowsToLeading ? thickness : -thickness
-        var path = Path()
-        path.addLines(edge)
-        path.addLines(edge.reversed().map { CGPoint(x: $0.x + behind, y: $0.y) })
-        path.closeSubpath()
-        return path
-    }
-}
-
-private struct LiquidFillLayer: View {
-    let progress: CGFloat
-    let flowsToLeading: Bool
-    let accentColor: Color
-    let isSelected: Bool
-
-    var body: some View {
-        let body = LiquidPillFillShape(progress: progress, flowsToLeading: flowsToLeading)
-        ZStack {
-            body.fill(
-                LinearGradient(
-                    colors: [accentColor.opacity(0.95), accentColor.opacity(0.85)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            // Volume: lighter on top, slightly deeper underneath.
-            body.fill(
-                LinearGradient(
-                    colors: [.white.opacity(0.20), .white.opacity(0.0), .black.opacity(0.10)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            LiquidFrontHighlightShape(progress: progress, flowsToLeading: flowsToLeading)
-                .fill(
-                    LinearGradient(
-                        colors: [.white.opacity(0.0), .white.opacity(0.55), .white.opacity(0.0)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-        }
-        .clipShape(Capsule())
-        .shadow(color: accentColor.opacity(isSelected ? 0.38 : 0), radius: 5, y: 1.5)
-        .overlay(Capsule().strokeBorder(accentColor.opacity(isSelected ? 0.6 : 0), lineWidth: 0.5))
-    }
-}
-
-/// Owns a pill's fill progress so the liquid and its label reveal animate from the same value.
-private struct LiquidSelectionReader<Content: View>: View {
-    let isSelected: Bool
-    let content: (_ progress: CGFloat, _ flowsToLeading: Bool) -> Content
-
-    @State private var progress: CGFloat
-
-    @Environment(\.pillLiquidDirection) private var pillLiquidDirection
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    init(
-        isSelected: Bool,
-        @ViewBuilder content: @escaping (_ progress: CGFloat, _ flowsToLeading: Bool) -> Content
-    ) {
-        self.isSelected = isSelected
-        self.content = content
-        _progress = State(initialValue: isSelected ? 1 : 0)
-    }
-
-    var body: some View {
-        let movingLeft = pillLiquidDirection == .trailingToLeading
-        content(progress, isSelected ? movingLeft : !movingLeft)
-            .onChange(of: isSelected) { _, selected in
-                let animation: Animation? = reduceMotion ? nil : .timingCurve(0.3, 0.7, 0.2, 1.0, duration: 0.5)
-                withAnimation(animation) {
-                    progress = selected ? 1 : 0
-                }
-            }
-    }
-}
-
-/// Draws a label twice: in the resting colour where there is no liquid, and in the reveal colour where the liquid has reached.
-private struct LiquidRevealLabel<Label: View>: View {
-    let progress: CGFloat
-    let flowsToLeading: Bool
-    let baseColor: Color
-    let revealColor: Color
-    let label: (Color) -> Label
-
-    var body: some View {
-        let liquid = LiquidPillFillShape(progress: progress, flowsToLeading: flowsToLeading).fill(Color.black)
-        ZStack {
-            label(baseColor)
-                .mask(
-                    Rectangle().fill(Color.black)
-                        .overlay(liquid.blendMode(.destinationOut))
-                        .compositingGroup()
-                )
-            label(revealColor)
-                .mask(liquid)
         }
     }
 }

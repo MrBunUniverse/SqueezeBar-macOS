@@ -71,8 +71,8 @@ public final class AppState: ObservableObject {
         static let uiScale = "squeezebar.uiScale"
         static let appTransparency = "squeezebar.appTransparency"
         static let appGlassFrost = "squeezebar.appGlassFrost"
-        static let appGlassDepth = "squeezebar.appGlassDepth"
         static let floatingBallEnabled = "squeezebar.floatingBallEnabled"
+        static let shakeToSummonEnabled = "squeezebar.shakeToSummonEnabled"
     }
     
     // MARK: - App Window Transparency
@@ -82,9 +82,6 @@ public final class AppState: ObservableObject {
     @Published public var appGlassFrost: Double {
         didSet { UserDefaults.standard.set(appGlassFrost, forKey: Keys.appGlassFrost) }
     }
-    @Published public var appGlassDepth: Double {
-        didSet { UserDefaults.standard.set(appGlassDepth, forKey: Keys.appGlassDepth) }
-    }
 
     // MARK: - Desktop Floating Drop Ball
     @Published public var floatingBallEnabled: Bool {
@@ -92,6 +89,15 @@ public final class AppState: ObservableObject {
             UserDefaults.standard.set(floatingBallEnabled, forKey: Keys.floatingBallEnabled)
             DispatchQueue.main.async {
                 FloatingBallController.shared.updateVisibility()
+            }
+        }
+    }
+
+    @Published public var shakeToSummonEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(shakeToSummonEnabled, forKey: Keys.shakeToSummonEnabled)
+            DispatchQueue.main.async {
+                FloatingBallController.shared.updateDragMonitor()
             }
         }
     }
@@ -636,6 +642,12 @@ public final class AppState: ObservableObject {
         } else {
             self.floatingBallEnabled = UserDefaults.standard.bool(forKey: Keys.floatingBallEnabled)
         }
+
+        if UserDefaults.standard.object(forKey: Keys.shakeToSummonEnabled) == nil {
+            self.shakeToSummonEnabled = true
+        } else {
+            self.shakeToSummonEnabled = UserDefaults.standard.bool(forKey: Keys.shakeToSummonEnabled)
+        }
         
         if let rawScale = UserDefaults.standard.string(forKey: Keys.uiScale),
            let scale = UIScaleOption(rawValue: rawScale) {
@@ -646,7 +658,6 @@ public final class AppState: ObservableObject {
 
         self.appTransparency = min(max(UserDefaults.standard.object(forKey: Keys.appTransparency) as? Double ?? 0, 0), 1)
         self.appGlassFrost = min(max(UserDefaults.standard.object(forKey: Keys.appGlassFrost) as? Double ?? 0.12, 0), 1)
-        self.appGlassDepth = min(max(UserDefaults.standard.object(forKey: Keys.appGlassDepth) as? Double ?? 0.65, 0), 1)
         
         if UserDefaults.standard.object(forKey: Keys.soundEnabled) == nil {
             self.soundEnabled = true

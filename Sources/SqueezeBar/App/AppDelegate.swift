@@ -31,6 +31,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             FloatingBallController.shared.show()
         }
+        FloatingBallController.shared.updateDragMonitor()
         
         if !UserDefaults.standard.bool(forKey: WelcomeWindowController.completedKey) {
             welcome.show()
@@ -38,6 +39,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        FloatingBallController.shared.stopDragMonitor()
         FolderWatchService.shared.stopMonitoring()
         AppState.shared.flushHistory()
     }

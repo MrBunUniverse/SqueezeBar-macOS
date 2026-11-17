@@ -240,6 +240,9 @@
     "Add Files" : {
 
     },
+    "Add files" : {
+
+    },
     "Allow Folder Access" : {
 
     },
@@ -283,9 +286,6 @@
 
     },
     "Audio compression failed: %@" : {
-
-    },
-    "Auto-squeeze watch folder" : {
 
     },
     "Automatic at %@. Choose Manual to adjust %@." : {
@@ -406,7 +406,7 @@
     "Completed" : {
 
     },
-    "Completion feedback" : {
+    "Completion sound" : {
 
     },
     "Compresses immediately with your current presets" : {
@@ -452,9 +452,6 @@
 
     },
     "Create Project Folder" : {
-
-    },
-    "Create subfolder for compressed files" : {
 
     },
     "Crystal" : {
@@ -631,7 +628,10 @@
     "File access" : {
 
     },
-    "Finder right-click quick action" : {
+    "File suffix" : {
+
+    },
+    "Finder action" : {
 
     },
     "Floating drop target that snaps to a screen edge" : {
@@ -656,9 +656,6 @@
 
     },
     "GIF Framerate" : {
-
-    },
-    "General" : {
 
     },
     "Graphite" : {
@@ -718,10 +715,7 @@
     "Images · Video · Audio · PDF, or click to choose" : {
 
     },
-    "Input methods" : {
-
-    },
-    "Interface scaling" : {
+    "Interface size" : {
 
     },
     "Invalid or corrupt image data" : {
@@ -739,7 +733,7 @@
     "Large" : {
 
     },
-    "Launch at system startup" : {
+    "Launch at login" : {
 
     },
     "Lock Original Audio Quality" : {
@@ -877,13 +871,7 @@
     "Original (Before)" : {
 
     },
-    "Output" : {
-
-    },
     "Output Format" : {
-
-    },
-    "Output file suffix" : {
 
     },
     "Output would overwrite the original file" : {
@@ -940,10 +928,10 @@
     "Playback position" : {
 
     },
-    "Plays dynamic audio feedback upon completing batch or single file squeezes." : {
+    "Preserve Original" : {
 
     },
-    "Preserve Original" : {
+    "Preview sound" : {
 
     },
     "Project %lld" : {
@@ -1000,10 +988,10 @@
     "Remove from History" : {
 
     },
-    "Removes author info and embedded thumbnail bloat" : {
+    "Remove metadata" : {
 
     },
-    "Removes location and camera info" : {
+    "Removes author info and embedded thumbnail bloat" : {
 
     },
     "Rename" : {
@@ -1018,10 +1006,10 @@
     "Reset" : {
 
     },
-    "Reset all compression stats" : {
+    "Reset all compression stats?" : {
 
     },
-    "Reset all compression stats?" : {
+    "Reset statistics…" : {
 
     },
     "Reset stats" : {
@@ -1054,7 +1042,7 @@
     "SQUEEZED AUDIO" : {
 
     },
-    "Save to folder" : {
+    "Save to" : {
 
     },
     "Saved %@" : {
@@ -1071,6 +1059,9 @@
       }
     },
     "Saved %@ so far" : {
+
+    },
+    "Saving" : {
 
     },
     "Scale, glass, accent color" : {
@@ -1097,7 +1088,10 @@
     "Settings" : {
 
     },
-    "Shading" : {
+    "Shake a file while dragging to bring the ball to your cursor" : {
+
+    },
+    "Shake to summon" : {
 
     },
     "Show Desktop Drop Ball" : {
@@ -1109,7 +1103,7 @@
     "Small" : {
 
     },
-    "Sound chime on completion" : {
+    "Sound" : {
 
     },
     "Split Slider" : {
@@ -1151,10 +1145,13 @@
     "Strip EXIF & Metadata" : {
 
     },
-    "Strip EXIF / metadata" : {
+    "Subfolder" : {
 
     },
     "Subfolder name" : {
+
+    },
+    "System" : {
 
     },
     "Target Size Limit" : {
@@ -1226,6 +1223,9 @@
     "Volume" : {
 
     },
+    "Watch folder" : {
+
+    },
     "Web JPEG" : {
 
     },
@@ -1242,12 +1242,6 @@
 
     },
     "Window blur" : {
-
-    },
-    "Window glass" : {
-
-    },
-    "Window shading" : {
 
     },
     "Yellow" : {
