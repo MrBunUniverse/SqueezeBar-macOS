@@ -50,6 +50,11 @@ public final class FloatingDropWindowController: NSObject, NSWindowDelegate {
             panel.title = "SqueezeBar"
             panel.titlebarAppearsTransparent = true
             panel.titleVisibility = .hidden
+            // Let AppKit own toolbar-style control insets across resizing and reopening.
+            // Content already extends under the transparent titlebar and ignores its safe area.
+            panel.toolbar = NSToolbar(identifier: "FloatingDropWindow")
+            panel.toolbarStyle = .unified
+            panel.titlebarSeparatorStyle = .none
             // Off: AppKit re-walks every SwiftUI responder for drag margins on each job row change.
             // The header carries a WindowDragHandle instead (QuickPopoverView.headerView).
             panel.isMovableByWindowBackground = false

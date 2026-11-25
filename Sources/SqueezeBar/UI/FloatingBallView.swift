@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 
 public struct FloatingBallView: View {
     @ObservedObject private var state = AppState.shared
@@ -86,7 +85,7 @@ public struct FloatingBallView: View {
                         liquidModel.scheduleAutoTuck(afterSeconds: 1.8)
                     }
                 }
-                .onDrop(of: [UTType.item.identifier], isTargeted: $isDropTargeted) { providers in
+                .onDrop(of: droppedFileURLTypes, isTargeted: $isDropTargeted) { providers in
                     handleDroppedProviders(providers)
                 }
                 .contextMenu {
@@ -288,10 +287,7 @@ public struct FloatingBallView: View {
     }
     
     private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
-        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
-        if !fileProviders.isEmpty {
-            FloatingBallController.shared.markDropInitiated()
-        }
+        FloatingBallController.shared.markDropInitiated()
 
         loadDroppedFileURLs(from: providers) { urls in
             guard !urls.isEmpty else {

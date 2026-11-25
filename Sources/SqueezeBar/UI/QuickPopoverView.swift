@@ -5,29 +5,35 @@ import QuickLookThumbnailing
 import ImageIO
 import AVFoundation
 import PDFKit
+import os
 
-func loadDroppedFileURLs(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
-    var urls: [URL] = []
-    let lock = NSLock()
+let droppedFileURLTypes: [UTType] = [.fileURL, .url]
+
+@MainActor
+func loadDroppedFileURLs(from providers: [NSItemProvider], completion: @escaping @MainActor ([URL]) -> Void) {
+    let urls = OSAllocatedUnfairLock(initialState: [URL]())
     let group = DispatchGroup()
 
-    for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+    for provider in providers {
+        guard let type = droppedFileURLTypes.first(where: {
+            provider.hasItemConformingToTypeIdentifier($0.identifier)
+        }) else { continue }
+
         group.enter()
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+        provider.loadItem(forTypeIdentifier: type.identifier, options: nil) { @Sendable item, _ in
             defer { group.leave() }
-            let url = item as? URL ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+            let url = item as? URL
+                ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                ?? (item as? String).flatMap { URL(string: $0) }
             guard let url, url.isFileURL else { return }
-            lock.lock()
-            urls.append(url)
-            lock.unlock()
+            urls.withLock { $0.append(url) }
         }
     }
 
     group.notify(queue: .main) {
-        Task { @MainActor in
-            if urls.isEmpty { AppState.shared.reportNoSupportedFiles(urls: []) }
-            completion(urls)
-        }
+        let collectedURLs = urls.withLock { $0 }
+        if collectedURLs.isEmpty { AppState.shared.reportNoSupportedFiles(urls: []) }
+        completion(collectedURLs)
     }
 }
 
@@ -116,57 +122,12 @@ private extension View {
     }
 }
 
-private struct GlassPrismRim: View {
-    private static let cornerRadius: CGFloat = 24
-    private static let channelOffset: CGFloat = 0.65
-    private static let innerInset: CGFloat = 1.1
-    private static let lineWidth: CGFloat = 0.9
-    private static let opacity: Double = 0.38
-    private static let lightModeScale: Double = 0.4
-    private static let cornerReach: CGFloat = 64
-
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
-        let spectrum = AngularGradient(
-            colors: [.cyan, .blue, .purple, .red, .orange, .yellow, .cyan],
-            center: .center, startAngle: .degrees(0), endAngle: .degrees(360)
-        )
-        ZStack {
-            shape.strokeBorder(spectrum, lineWidth: Self.lineWidth)
-                .offset(x: -Self.channelOffset, y: -Self.channelOffset)
-            shape.inset(by: Self.innerInset)
-                .strokeBorder(spectrum, lineWidth: Self.lineWidth)
-                .rotationEffect(.degrees(180))
-                .offset(x: Self.channelOffset, y: Self.channelOffset)
-        }
-        .mask {
-            ZStack {
-                LinearGradient(colors: [.white.opacity(0.45), .clear], startPoint: .top, endPoint: .center)
-                ForEach(0..<4) { corner in
-                    RadialGradient(
-                        colors: [.white.opacity(corner < 2 ? 1 : 0.35), .clear],
-                        center: UnitPoint(x: corner % 2 == 0 ? 0 : 1, y: corner < 2 ? 0 : 1),
-                        startRadius: 0, endRadius: Self.cornerReach
-                    )
-                }
-            }
-        }
-        .opacity(Self.opacity * (colorScheme == .dark ? 1 : Self.lightModeScale))
-        .blendMode(colorScheme == .dark ? .plusLighter : .multiply)
-        .clipShape(shape)
-        .allowsHitTesting(false)
-    }
-}
-
 struct DetachedGlassRim: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 24)
         ZStack {
-            GlassPrismRim()
             if colorScheme == .dark {
                 shape.strokeBorder(Color.white.opacity(0.10), lineWidth: 4)
                     .blur(radius: 3)
@@ -186,10 +147,24 @@ struct DetachedGlassRim: View {
     }
 }
 
+private struct FormatDrawerHeight: ViewModifier, Animatable {
+    var height: CGFloat
+
+    var animatableData: CGFloat {
+        get { height }
+        set { height = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content.frame(height: max(0, height), alignment: .top)
+    }
+}
+
 public struct QuickPopoverView: View {
     @ObservedObject private var updates = UpdateChecker.shared
     @EnvironmentObject var state: AppState
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     // Shows job progress (header, activity list), so it has to observe the job board directly.
     @ObservedObject private var jobs = AppState.shared.jobs
     public var isDetachedWindow: Bool = false
@@ -200,6 +175,8 @@ public struct QuickPopoverView: View {
     @State private var isWindowDropTargeted: Bool = false
     @State private var activeFormatCategory: MediaFormatCategory = .images
     @State private var isFormatDrawerExpanded: Bool = false
+    @State private var formatDrawerHeight: CGFloat = 0
+    private let activitySectionSpacing: CGFloat = 14
     
     // Project Folders & Batch Edit State
     @State private var isEditMode: Bool = false
@@ -298,7 +275,7 @@ public struct QuickPopoverView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: isDetachedWindow ? 24 : 0))
         .ignoresSafeArea()
-        .onDrop(of: [.item], isTargeted: $isWindowDropTargeted) { providers in
+        .onDrop(of: droppedFileURLTypes, isTargeted: $isWindowDropTargeted) { providers in
             extractAndProcess(providers: providers)
         }
         .overlay(alignment: .top) {
@@ -371,12 +348,12 @@ public struct QuickPopoverView: View {
             
             // Tab Content
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 14) {
+                VStack(spacing: activitySectionSpacing) {
                     if selectedTab == .activity {
-                        statsSummaryCard
-                        
-                        // Active Format Configuration Deck (Sliders, Quality, Resolution, Target Size, Codecs)
-                        activeFormatSettingsDeck
+                        VStack(spacing: 0) {
+                            statsSummaryCard
+                            activeFormatSettingsDeck
+                        }
                         
                         if !jobs.activeJobs.isEmpty {
                             activeQueueSection
@@ -554,13 +531,11 @@ public struct QuickPopoverView: View {
         let isExpanded = activeFormatCategory == category && isFormatDrawerExpanded
 
         return Button {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                if isExpanded {
-                    isFormatDrawerExpanded = false
-                } else {
-                    activeFormatCategory = category
-                    isFormatDrawerExpanded = true
-                }
+            if isExpanded {
+                isFormatDrawerExpanded = false
+            } else {
+                activeFormatCategory = category
+                isFormatDrawerExpanded = true
             }
         } label: {
             LiveProfileGlowCard(accentColor: .white, isSelected: isExpanded) {
@@ -806,44 +781,46 @@ public struct QuickPopoverView: View {
                     }
                 }
                 .padding(9)
-                .background(
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            // Base Glass Card
-                            RoundedRectangle(cornerRadius: 10)
-                                .surfaceFill(
-                                    LinearGradient(
-                                        colors: [Color.surfaceWhite(0.045, for: colorScheme), Color.surfaceWhite(0.015, for: colorScheme)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    )
+                .background {
+                    ZStack {
+                        // Base Glass Card matching Recent row surface aesthetic
+                        RoundedRectangle(cornerRadius: 10)
+                            .surfaceFill(
+                                LinearGradient(
+                                    colors: [Color.surfaceWhite(0.045, for: colorScheme), Color.surfaceWhite(0.015, for: colorScheme)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
                                 )
-                            
-                            // Unified Light Opacity Progress Fill Across Card
-                            if !job.isFinished {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                state.accentColor.opacity(0.22),
-                                                state.accentColor.opacity(0.12)
-                                            ],
-                                            startPoint: .leading,
-                                            endPoint: .trailing
-                                        )
-                                    )
-                                    .frame(width: max(0, geo.size.width * CGFloat(min(1.0, max(0.0, job.progress)))))
-                                    .animation(.linear(duration: ProgressGate.minInterval), value: job.progress)
-                            }
+                            )
+                            .darkControlSurface(RoundedRectangle(cornerRadius: 10), borderless: true)
+
+                        // Liquid progress fill under row content
+                        if !job.isFinished {
+                            ActiveJobLiquidProgressFill(
+                                progress: job.progress,
+                                accentColor: state.accentColor,
+                                isPaused: job.isPaused
+                            )
                         }
                     }
-                )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(
+                            colorScheme == .dark ? Color.surfaceWhite(0.07, for: colorScheme) : Color.black.opacity(0.06),
+                            lineWidth: 0.5
+                        )
+                        .allowsHitTesting(false)
+                }
                 .overlay(alignment: .bottom) {
                     if !job.isFinished {
                         Rectangle()
-                            .fill(state.accentColor.opacity(0.45))
+                            .fill(state.accentColor.opacity(job.isPaused ? 0.25 : 0.40))
                             .frame(height: 1)
+                            .allowsHitTesting(false)
                     }
                 }
             }
@@ -900,7 +877,7 @@ public struct QuickPopoverView: View {
         }
         .buttonStyle(.plain)
         .help("Drop files here, or click to choose files to compress")
-        .onDrop(of: [.item], isTargeted: $isDropTargeted) { providers in
+        .onDrop(of: droppedFileURLTypes, isTargeted: $isDropTargeted) { providers in
             extractAndProcess(providers: providers)
         }
     }
@@ -1332,7 +1309,7 @@ public struct QuickPopoverView: View {
             .buttonStyle(.plain)
             .help("Drop files here, or click to choose files to compress")
             .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isDropTargeted)
-            .onDrop(of: [.item], isTargeted: $isDropTargeted) { providers in
+            .onDrop(of: droppedFileURLTypes, isTargeted: $isDropTargeted) { providers in
                 extractAndProcess(providers: providers)
             }
 
@@ -1392,7 +1369,7 @@ public struct QuickPopoverView: View {
                         )
                 )
                 .animation(.spring(response: 0.28, dampingFraction: 0.72), value: isQueueDropTargeted)
-                .onDrop(of: [.item], isTargeted: $isQueueDropTargeted) { providers in
+                .onDrop(of: droppedFileURLTypes, isTargeted: $isQueueDropTargeted) { providers in
                     extractAndAddToQueue(providers: providers)
                 }
             } else {
@@ -1469,7 +1446,7 @@ public struct QuickPopoverView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .strokeBorder(Color.surfaceWhite(0.08, for: colorScheme), style: StrokeStyle(lineWidth: 1, dash: [3]))
             )
-            .onDrop(of: [.item], isTargeted: $isQueueDropTargeted) { providers in
+            .onDrop(of: droppedFileURLTypes, isTargeted: $isQueueDropTargeted) { providers in
                 extractAndAddToQueue(providers: providers)
             }
         }
@@ -1511,75 +1488,94 @@ public struct QuickPopoverView: View {
         )
     }
     
+    static func formatDrawerAnimation(reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .timingCurve(0.32, 0.0, 0.20, 1.0, duration: 0.40)
+    }
+
     // MARK: - Active Format Configuration Deck (Activity Tab Collapsible Drawer)
-    @ViewBuilder
     private var activeFormatSettingsDeck: some View {
-        if isFormatDrawerExpanded {
-            VStack(spacing: 8) {
-                // Header with Format Badge & Done Collapse Button
-                HStack(spacing: 6) {
-                    HStack(spacing: 5) {
-                        Image(systemName: activeFormatCategory == .images ? "photo" : (activeFormatCategory == .videos ? "film" : (activeFormatCategory == .audio ? "waveform" : "doc.text.fill")))
-                            .font(.system(size: 10.5, weight: .bold, design: .rounded))
-                            .foregroundColor(formatAccentColor(for: activeFormatCategory))
-                        Text("\(activeFormatCategory.displayName) Settings")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundColor(.primary)
-                    }
-                    
-                    Spacer()
-                    
-                    Button {
-                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                            isFormatDrawerExpanded = false
-                        }
-                    } label: {
-                        HStack(spacing: 3.5) {
-                            Text("Done")
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            Image(systemName: "chevron.up")
-                                .font(.system(size: 8, weight: .bold, design: .rounded))
-                        }
-                        .foregroundColor(Color.primary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            Capsule()
-                                .surfaceFill(Color.surfaceWhite(0.10, for: colorScheme))
-                                .overlay(
-                                    Capsule()
-                                        .strokeBorder(Color.surfaceWhite(0.18, for: colorScheme), lineWidth: 0.5)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Collapse Format Controls")
-                }
-                .padding(.horizontal, 2)
-                
-                if activeFormatCategory == .images {
-                    imageSettingsCard
-                } else if activeFormatCategory == .videos {
-                    videoSettingsCard
-                } else if activeFormatCategory == .audio {
-                    audioSettingsCard
-                } else if activeFormatCategory == .pdf {
-                    pdfSettingsCard
-                }
+        let isExpanded = isFormatDrawerExpanded
+        return formatSettingsContent
+            .padding(.top, activitySectionSpacing)
+            .fixedSize(horizontal: false, vertical: true)
+            // Measure at the available width, independently of the animated viewport.
+            .onGeometryChange(for: CGFloat.self) { geometry in
+                isExpanded ? geometry.size.height : 0
+            } action: { height in
+                formatDrawerHeight = height
             }
-            .padding(10)
-            .background(
+            .animation(Self.formatDrawerAnimation(reduceMotion: reduceMotion)) { content in
+                content.modifier(FormatDrawerHeight(height: formatDrawerHeight))
+            }
+            .background {
                 RoundedRectangle(cornerRadius: 12)
                     .surfaceFill(Color.black.opacity(colorScheme == .dark ? 0.34 : 0.25))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
                             .strokeBorder(Color.surfaceWhite(0.07, for: colorScheme), lineWidth: 0.5)
                     )
-            )
-            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
-        }
+                    .padding(.top, activitySectionSpacing)
+            }
+            .clipped()
+            .contentShape(Rectangle())
+            .allowsHitTesting(isExpanded)
+            .accessibilityHidden(!isExpanded)
     }
-    
+
+    private var formatSettingsContent: some View {
+        VStack(spacing: 8) {
+            // Header with Format Badge & Done Collapse Button
+            HStack(spacing: 6) {
+                HStack(spacing: 5) {
+                    Image(systemName: activeFormatCategory == .images ? "photo" : (activeFormatCategory == .videos ? "film" : (activeFormatCategory == .audio ? "waveform" : "doc.text.fill")))
+                        .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                        .foregroundColor(formatAccentColor(for: activeFormatCategory))
+                    Text("\(activeFormatCategory.displayName) Settings")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(.primary)
+                }
+
+                Spacer()
+
+                Button {
+                    isFormatDrawerExpanded = false
+                } label: {
+                    HStack(spacing: 3.5) {
+                        Text("Done")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        Image(systemName: "chevron.up")
+                            .font(.system(size: 8, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(Color.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .surfaceFill(Color.surfaceWhite(0.10, for: colorScheme))
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(Color.surfaceWhite(0.18, for: colorScheme), lineWidth: 0.5)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Collapse Format Controls")
+            }
+            .padding(.horizontal, 2)
+
+            if activeFormatCategory == .images {
+                imageSettingsCard
+            } else if activeFormatCategory == .videos {
+                videoSettingsCard
+            } else if activeFormatCategory == .audio {
+                audioSettingsCard
+            } else if activeFormatCategory == .pdf {
+                pdfSettingsCard
+            }
+        }
+        .padding(10)
+    }
+
     private func formatAccentColor(for category: MediaFormatCategory) -> Color {
         return state.accentColor
     }
@@ -4096,6 +4092,255 @@ struct UniversalPillGliderItem<T: Hashable>: View {
     }
 }
 
+// MARK: - Active Row Liquid Progress Fill
+enum LiquidProgressMotion {
+    // Critically damped (bounce: 0) springs: velocity-continuous across 10 Hz ProgressGate updates,
+    // zero overshoot, and settles cleanly within ~0.30 s with no per-row timer loop.
+    static let leadSpring = Spring(duration: 0.14, bounce: 0.0)
+    static let bodySpring = Spring(duration: 0.20, bounce: 0.0)
+
+    struct State: Equatable {
+        var value: Double = 0
+        var velocity: Double = 0
+        var target: Double = 0
+    }
+
+    static func animation(_ spring: Spring, reduceMotion: Bool) -> Animation? {
+        reduceMotion ? nil : .spring(spring)
+    }
+
+    static func step(_ state: inout State, spring: Spring, to newTarget: Double? = nil, dt: TimeInterval) {
+        if dt > 0 {
+            let delta = state.target - state.value
+            let disp = spring.value(target: delta, initialVelocity: state.velocity, time: dt)
+            let vel = spring.velocity(target: delta, initialVelocity: state.velocity, time: dt)
+            state.value += disp
+            state.velocity = vel
+        }
+        if let newTarget {
+            state.target = min(max(newTarget, 0), 1)
+        }
+    }
+
+    static func isSettled(_ state: State, tolerance: Double = 0.0005, velocityTolerance: Double = 0.005) -> Bool {
+        abs(state.target - state.value) <= tolerance && abs(state.velocity) <= velocityTolerance
+    }
+}
+
+struct LiquidProgressShape: Shape {
+    var progress: CGFloat
+    var cornerRadius: CGFloat = 10
+    var maxBulge: CGFloat = 9
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    static func meniscusMetrics(in rect: CGRect, progress: CGFloat, maxBulge: CGFloat) -> (tipX: CGFloat, shoulderX: CGFloat, bulge: CGFloat)? {
+        let p = min(max(progress, 0), 1)
+        let w = rect.width * p
+        guard w > 0.5, rect.width > 1, rect.height > 1 else { return nil }
+        if p >= 0.9995 {
+            return (rect.maxX, rect.maxX, 0)
+        }
+        let remaining = rect.maxX - (rect.minX + w)
+        let fadeZone = max(1, maxBulge * 2.4)
+        let tEnd = min(1, max(0, remaining / fadeZone))
+        let smoothEnd = tEnd * tEnd * (3 - 2 * tEnd)
+        let bulge = min(maxBulge, w * 0.45) * smoothEnd
+        let tipX = rect.minX + w
+        let shoulderX = max(rect.minX, tipX - bulge)
+        return (tipX, shoulderX, bulge)
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let p = min(max(progress, 0), 1)
+        let r = min(cornerRadius, min(rect.width, rect.height) / 2)
+        guard let m = Self.meniscusMetrics(in: rect, progress: p, maxBulge: maxBulge) else {
+            return Path()
+        }
+        if p >= 0.9995 {
+            return RoundedRectangle(cornerRadius: r).path(in: rect)
+        }
+
+        let halfH = rect.height / 2
+        let k: CGFloat = 0.58
+        var path = Path()
+
+        if m.shoulderX >= rect.minX + r {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY + r))
+            path.addArc(
+                center: CGPoint(x: rect.minX + r, y: rect.minY + r),
+                radius: r,
+                startAngle: .degrees(180),
+                endAngle: .degrees(270),
+                clockwise: false
+            )
+            path.addLine(to: CGPoint(x: m.shoulderX, y: rect.minY))
+        } else {
+            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            path.addLine(to: CGPoint(x: m.shoulderX, y: rect.minY))
+        }
+
+        path.addCurve(
+            to: CGPoint(x: m.tipX, y: rect.midY),
+            control1: CGPoint(x: m.shoulderX + m.bulge * k, y: rect.minY),
+            control2: CGPoint(x: m.tipX, y: rect.midY - halfH * k)
+        )
+        path.addCurve(
+            to: CGPoint(x: m.shoulderX, y: rect.maxY),
+            control1: CGPoint(x: m.tipX, y: rect.midY + halfH * k),
+            control2: CGPoint(x: m.shoulderX + m.bulge * k, y: rect.maxY)
+        )
+
+        if m.shoulderX >= rect.minX + r {
+            path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+            path.addArc(
+                center: CGPoint(x: rect.minX + r, y: rect.maxY - r),
+                radius: r,
+                startAngle: .degrees(90),
+                endAngle: .degrees(180),
+                clockwise: false
+            )
+        } else {
+            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        }
+
+        path.closeSubpath()
+        return path
+    }
+}
+
+struct LiquidProgressMeniscusShape: Shape {
+    var progress: CGFloat
+    var maxBulge: CGFloat = 9
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let p = min(max(progress, 0), 1)
+        guard p > 0.004, p < 0.996,
+              let m = LiquidProgressShape.meniscusMetrics(in: rect, progress: p, maxBulge: maxBulge),
+              m.bulge > 0.25 else {
+            return Path()
+        }
+        let halfH = rect.height / 2
+        let k: CGFloat = 0.58
+        var path = Path()
+        path.move(to: CGPoint(x: m.shoulderX, y: rect.minY))
+        path.addCurve(
+            to: CGPoint(x: m.tipX, y: rect.midY),
+            control1: CGPoint(x: m.shoulderX + m.bulge * k, y: rect.minY),
+            control2: CGPoint(x: m.tipX, y: rect.midY - halfH * k)
+        )
+        path.addCurve(
+            to: CGPoint(x: m.shoulderX, y: rect.maxY),
+            control1: CGPoint(x: m.tipX, y: rect.midY + halfH * k),
+            control2: CGPoint(x: m.shoulderX + m.bulge * k, y: rect.maxY)
+        )
+        return path
+    }
+}
+
+struct ActiveJobLiquidProgressFill: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var envReduceMotion
+
+    let progress: Double
+    let accentColor: Color
+    var isPaused: Bool = false
+    var cornerRadius: CGFloat = 10
+    var leadOverride: Double? = nil
+    var bodyOverride: Double? = nil
+    var reduceMotionOverride: Bool? = nil
+
+    var body: some View {
+        let reduceMotion = reduceMotionOverride ?? envReduceMotion
+        let clamped = min(max(progress, 0), 1)
+        let leadValue = min(max(leadOverride ?? clamped, 0), 1)
+        let bodyValue = min(max(bodyOverride ?? clamped, 0), 1)
+        let isExplicitSample = leadOverride != nil || bodyOverride != nil
+        let activeFactor: Double = isPaused ? 0.65 : 1.0
+        let isDark = colorScheme == .dark
+
+        let startFade = min(1, max(0, bodyValue / 0.02))
+        let endFade = min(1, max(0, (1 - bodyValue) / 0.04))
+        let meniscusVisibility = startFade * endFade
+
+        ZStack {
+            // Soft leading liquid tide: advances slightly sooner during motion and settles cleanly back into the body.
+            LiquidProgressShape(progress: CGFloat(leadValue), cornerRadius: cornerRadius, maxBulge: 12)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            accentColor.opacity(0.05 * activeFactor),
+                            accentColor.opacity((isDark ? 0.14 : 0.11) * activeFactor)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .animation(
+                    isExplicitSample ? nil : LiquidProgressMotion.animation(LiquidProgressMotion.leadSpring, reduceMotion: reduceMotion),
+                    value: clamped
+                )
+
+            // Main volumetric liquid body tuned for legibility under text in both themes.
+            LiquidProgressShape(progress: CGFloat(bodyValue), cornerRadius: cornerRadius, maxBulge: 9)
+                .fill(
+                    LinearGradient(
+                        colors: isDark
+                            ? [accentColor.opacity(0.17 * activeFactor), accentColor.opacity(0.24 * activeFactor)]
+                            : [accentColor.opacity(0.11 * activeFactor), accentColor.opacity(0.18 * activeFactor)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .overlay {
+                    LiquidProgressShape(progress: CGFloat(bodyValue), cornerRadius: cornerRadius, maxBulge: 9)
+                        .fill(
+                            LinearGradient(
+                                colors: isDark
+                                    ? [.white.opacity(0.08 * activeFactor), .white.opacity(0), .black.opacity(0.10 * activeFactor)]
+                                    : [.white.opacity(0.22 * activeFactor), .white.opacity(0), accentColor.opacity(0.05 * activeFactor)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                }
+                .animation(
+                    isExplicitSample ? nil : LiquidProgressMotion.animation(LiquidProgressMotion.bodySpring, reduceMotion: reduceMotion),
+                    value: clamped
+                )
+
+            // Subtle luminous meniscus highlight along the curved advancing edge.
+            LiquidProgressMeniscusShape(progress: CGFloat(bodyValue), maxBulge: 9)
+                .stroke(
+                    LinearGradient(
+                        colors: isDark
+                            ? [.white.opacity(0.04), accentColor.opacity(0.40 * activeFactor), .white.opacity(0.26 * activeFactor), accentColor.opacity(0.36 * activeFactor), .white.opacity(0.04)]
+                            : [.white.opacity(0.08), accentColor.opacity(0.34 * activeFactor), .white.opacity(0.45 * activeFactor), accentColor.opacity(0.30 * activeFactor), .white.opacity(0.08)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    style: StrokeStyle(lineWidth: 1.0, lineCap: .round)
+                )
+                .opacity(meniscusVisibility)
+                .animation(
+                    isExplicitSample ? nil : LiquidProgressMotion.animation(LiquidProgressMotion.bodySpring, reduceMotion: reduceMotion),
+                    value: clamped
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Dedicated Folder Section Item View with Drag & Drop Targeting & Inline Customization
 private struct FolderSectionItemView: View {
     @EnvironmentObject var state: AppState
@@ -4298,7 +4543,7 @@ private struct FolderSectionItemView: View {
             }
         }
         .padding(.vertical, 2)
-        .onDrop(of: [.item], isTargeted: $isFolderDropTargeted) { providers in
+        .onDrop(of: droppedFileURLTypes, isTargeted: $isFolderDropTargeted) { providers in
             extractAndProcessFolderDrop(providers: providers, targetFolderId: folder.id)
         }
     }
