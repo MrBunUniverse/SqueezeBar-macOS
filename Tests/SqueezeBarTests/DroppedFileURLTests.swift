@@ -37,6 +37,34 @@ final class DroppedFileURLTests: XCTestCase {
         AppState.shared.clearFailures()
     }
 
+    func testFileURLDeliveredAsDataIsAccepted() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-data-drop.png")
+        try Data().write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let data = fileURL.dataRepresentation
+        let provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { completion in
+            completion(data, nil)
+            return nil
+        }
+
+        let urls = await load([provider])
+        XCTAssertEqual(urls.map(\.path), [fileURL.path])
+    }
+
+    func testNonFileStringDeliveredAsURLIsRejected() async {
+        let provider = NSItemProvider()
+        provider.registerItem(forTypeIdentifier: UTType.url.identifier, loadHandler: { completion, _, _ in
+            completion?("https://example.com/a.png" as NSString, nil)
+        })
+
+        let urls = await load([provider])
+        XCTAssertTrue(urls.isEmpty)
+        AppState.shared.clearFailures()
+    }
+
     private func load(_ providers: [NSItemProvider]) async -> [URL] {
         await withCheckedContinuation { continuation in
             loadDroppedFileURLs(from: providers) { urls in

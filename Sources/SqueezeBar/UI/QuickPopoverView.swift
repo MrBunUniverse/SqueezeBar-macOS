@@ -1519,6 +1519,7 @@ public struct QuickPopoverView: View {
             .clipped()
             .contentShape(Rectangle())
             .allowsHitTesting(isExpanded)
+            .disabled(!isExpanded)
             .accessibilityHidden(!isExpanded)
     }
 
@@ -4099,31 +4100,8 @@ enum LiquidProgressMotion {
     static let leadSpring = Spring(duration: 0.14, bounce: 0.0)
     static let bodySpring = Spring(duration: 0.20, bounce: 0.0)
 
-    struct State: Equatable {
-        var value: Double = 0
-        var velocity: Double = 0
-        var target: Double = 0
-    }
-
     static func animation(_ spring: Spring, reduceMotion: Bool) -> Animation? {
         reduceMotion ? nil : .spring(spring)
-    }
-
-    static func step(_ state: inout State, spring: Spring, to newTarget: Double? = nil, dt: TimeInterval) {
-        if dt > 0 {
-            let delta = state.target - state.value
-            let disp = spring.value(target: delta, initialVelocity: state.velocity, time: dt)
-            let vel = spring.velocity(target: delta, initialVelocity: state.velocity, time: dt)
-            state.value += disp
-            state.velocity = vel
-        }
-        if let newTarget {
-            state.target = min(max(newTarget, 0), 1)
-        }
-    }
-
-    static func isSettled(_ state: State, tolerance: Double = 0.0005, velocityTolerance: Double = 0.005) -> Bool {
-        abs(state.target - state.value) <= tolerance && abs(state.velocity) <= velocityTolerance
     }
 }
 
@@ -4248,32 +4226,25 @@ struct LiquidProgressMeniscusShape: Shape {
 
 struct ActiveJobLiquidProgressFill: View {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var envReduceMotion
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let progress: Double
     let accentColor: Color
     var isPaused: Bool = false
     var cornerRadius: CGFloat = 10
-    var leadOverride: Double? = nil
-    var bodyOverride: Double? = nil
-    var reduceMotionOverride: Bool? = nil
 
     var body: some View {
-        let reduceMotion = reduceMotionOverride ?? envReduceMotion
         let clamped = min(max(progress, 0), 1)
-        let leadValue = min(max(leadOverride ?? clamped, 0), 1)
-        let bodyValue = min(max(bodyOverride ?? clamped, 0), 1)
-        let isExplicitSample = leadOverride != nil || bodyOverride != nil
         let activeFactor: Double = isPaused ? 0.65 : 1.0
         let isDark = colorScheme == .dark
 
-        let startFade = min(1, max(0, bodyValue / 0.02))
-        let endFade = min(1, max(0, (1 - bodyValue) / 0.04))
+        let startFade = min(1, max(0, clamped / 0.02))
+        let endFade = min(1, max(0, (1 - clamped) / 0.04))
         let meniscusVisibility = startFade * endFade
 
         ZStack {
             // Soft leading liquid tide: advances slightly sooner during motion and settles cleanly back into the body.
-            LiquidProgressShape(progress: CGFloat(leadValue), cornerRadius: cornerRadius, maxBulge: 12)
+            LiquidProgressShape(progress: CGFloat(clamped), cornerRadius: cornerRadius, maxBulge: 12)
                 .fill(
                     LinearGradient(
                         colors: [
@@ -4285,12 +4256,12 @@ struct ActiveJobLiquidProgressFill: View {
                     )
                 )
                 .animation(
-                    isExplicitSample ? nil : LiquidProgressMotion.animation(LiquidProgressMotion.leadSpring, reduceMotion: reduceMotion),
+                    LiquidProgressMotion.animation(LiquidProgressMotion.leadSpring, reduceMotion: reduceMotion),
                     value: clamped
                 )
 
             // Main volumetric liquid body tuned for legibility under text in both themes.
-            LiquidProgressShape(progress: CGFloat(bodyValue), cornerRadius: cornerRadius, maxBulge: 9)
+            LiquidProgressShape(progress: CGFloat(clamped), cornerRadius: cornerRadius, maxBulge: 9)
                 .fill(
                     LinearGradient(
                         colors: isDark
@@ -4301,7 +4272,7 @@ struct ActiveJobLiquidProgressFill: View {
                     )
                 )
                 .overlay {
-                    LiquidProgressShape(progress: CGFloat(bodyValue), cornerRadius: cornerRadius, maxBulge: 9)
+                    LiquidProgressShape(progress: CGFloat(clamped), cornerRadius: cornerRadius, maxBulge: 9)
                         .fill(
                             LinearGradient(
                                 colors: isDark
@@ -4313,12 +4284,12 @@ struct ActiveJobLiquidProgressFill: View {
                         )
                 }
                 .animation(
-                    isExplicitSample ? nil : LiquidProgressMotion.animation(LiquidProgressMotion.bodySpring, reduceMotion: reduceMotion),
+                    LiquidProgressMotion.animation(LiquidProgressMotion.bodySpring, reduceMotion: reduceMotion),
                     value: clamped
                 )
 
             // Subtle luminous meniscus highlight along the curved advancing edge.
-            LiquidProgressMeniscusShape(progress: CGFloat(bodyValue), maxBulge: 9)
+            LiquidProgressMeniscusShape(progress: CGFloat(clamped), maxBulge: 9)
                 .stroke(
                     LinearGradient(
                         colors: isDark
@@ -4331,7 +4302,7 @@ struct ActiveJobLiquidProgressFill: View {
                 )
                 .opacity(meniscusVisibility)
                 .animation(
-                    isExplicitSample ? nil : LiquidProgressMotion.animation(LiquidProgressMotion.bodySpring, reduceMotion: reduceMotion),
+                    LiquidProgressMotion.animation(LiquidProgressMotion.bodySpring, reduceMotion: reduceMotion),
                     value: clamped
                 )
         }
