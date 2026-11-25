@@ -176,6 +176,7 @@ public struct QuickPopoverView: View {
     @State private var activeFormatCategory: MediaFormatCategory = .images
     @State private var isFormatDrawerExpanded: Bool = false
     @State private var formatDrawerHeight: CGFloat = 0
+    @State private var isFormatDrawerDisabled: Bool = true
     private let activitySectionSpacing: CGFloat = 14
     
     // Project Folders & Batch Edit State
@@ -1502,11 +1503,20 @@ public struct QuickPopoverView: View {
             .onGeometryChange(for: CGFloat.self) { geometry in
                 isExpanded ? geometry.size.height : 0
             } action: { height in
-                formatDrawerHeight = height
+                withAnimation(Self.formatDrawerAnimation(reduceMotion: reduceMotion), completionCriteria: .logicallyComplete) {
+                    formatDrawerHeight = height
+                } completion: {
+                    if !isFormatDrawerExpanded {
+                        isFormatDrawerDisabled = true
+                    }
+                }
             }
-            .animation(Self.formatDrawerAnimation(reduceMotion: reduceMotion)) { content in
-                content.modifier(FormatDrawerHeight(height: formatDrawerHeight))
+            .onChange(of: isFormatDrawerExpanded) { _, expanded in
+                if expanded {
+                    isFormatDrawerDisabled = false
+                }
             }
+            .modifier(FormatDrawerHeight(height: formatDrawerHeight))
             .background {
                 RoundedRectangle(cornerRadius: 12)
                     .surfaceFill(Color.black.opacity(colorScheme == .dark ? 0.34 : 0.25))
@@ -1519,7 +1529,7 @@ public struct QuickPopoverView: View {
             .clipped()
             .contentShape(Rectangle())
             .allowsHitTesting(isExpanded)
-            .disabled(!isExpanded)
+            .disabled(isFormatDrawerDisabled)
             .accessibilityHidden(!isExpanded)
     }
 

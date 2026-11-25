@@ -54,6 +54,22 @@ final class DroppedFileURLTests: XCTestCase {
         XCTAssertEqual(urls.map(\.path), [fileURL.path])
     }
 
+    func testFileURLStringDeliveredAsURLIsAccepted() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(UUID().uuidString)-string-drop.png")
+        try Data().write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let urlString = fileURL.absoluteString
+        let provider = NSItemProvider()
+        provider.registerItem(forTypeIdentifier: UTType.url.identifier, loadHandler: { completion, _, _ in
+            completion?(urlString as NSString, nil)
+        })
+
+        let urls = await load([provider])
+        XCTAssertEqual(urls.map(\.path), [fileURL.path])
+    }
+
     func testNonFileStringDeliveredAsURLIsRejected() async {
         let provider = NSItemProvider()
         provider.registerItem(forTypeIdentifier: UTType.url.identifier, loadHandler: { completion, _, _ in
@@ -66,12 +82,15 @@ final class DroppedFileURLTests: XCTestCase {
     }
 
     private func load(_ providers: [NSItemProvider]) async -> [URL] {
-        await withCheckedContinuation { continuation in
-            loadDroppedFileURLs(from: providers) { urls in
-                MainActor.preconditionIsolated()
-                XCTAssertTrue(Thread.isMainThread)
-                continuation.resume(returning: urls)
-            }
+        let expectation = expectation(description: "loadDroppedFileURLs completion")
+        var result: [URL] = []
+        loadDroppedFileURLs(from: providers) { urls in
+            MainActor.preconditionIsolated()
+            XCTAssertTrue(Thread.isMainThread)
+            result = urls
+            expectation.fulfill()
         }
+        await fulfillment(of: [expectation], timeout: 2)
+        return result
     }
 }
